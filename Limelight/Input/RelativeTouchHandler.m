@@ -7,6 +7,7 @@
 //
 
 #import "RelativeTouchHandler.h"
+#import "../PenumbraSettings.h"
 
 #include <Limelight.h>
 
@@ -19,7 +20,13 @@ static const int REFERENCE_HEIGHT = 720;
     BOOL isDragging;
     NSTimer* dragTimer;
     NSUInteger peakTouchCount;
-    
+
+    float sensitivity;
+    BOOL inertialScroll;
+    float scrollVelocity;
+    CFTimeInterval lastScrollTime;
+    NSTimer* inertiaTimer;
+
 #if TARGET_OS_TV
     UIGestureRecognizer* remotePressRecognizer;
     UIGestureRecognizer* remoteLongPressRecognizer;
@@ -31,7 +38,9 @@ static const int REFERENCE_HEIGHT = 720;
 - (id)initWithView:(StreamView*)view {
     self = [self init];
     self->view = view;
-    
+    sensitivity = PenumbraMouseSensitivity();
+    inertialScroll = PenumbraInertialScrollEnabled();
+
 #if TARGET_OS_TV
     remotePressRecognizer = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(remoteButtonPressed:)];
     remotePressRecognizer.allowedPressTypes = @[@(UIPressTypeSelect)];
@@ -58,7 +67,30 @@ static const int REFERENCE_HEIGHT = 720;
     }
 }
 
+- (void)startInertialScroll {
+    // Ignore flings where the fingers stopped before lifting or that were too slow
+    if (CACurrentMediaTime() - lastScrollTime > 0.1 || fabs(scrollVelocity) < 300) {
+        return;
+    }
+
+    [inertiaTimer invalidate];
+    inertiaTimer = [NSTimer scheduledTimerWithTimeInterval:1.0 / 60 repeats:YES block:^(NSTimer* timer) {
+        self->scrollVelocity *= 0.95;
+        if (fabs(self->scrollVelocity) < 100) {
+            [self stopInertialScroll];
+            return;
+        }
+        LiSendHighResScrollEvent((short)(self->scrollVelocity / 60));
+    }];
+}
+
+- (void)stopInertialScroll {
+    [inertiaTimer invalidate];
+    inertiaTimer = nil;
+}
+
 - (void)touchesBegan:(NSSet *)touches withEvent:(UIEvent *)event {
+    [self stopInertialScroll];
     touchMoved = false;
     peakTouchCount = [[event allTouches] count];
     if ([[event allTouches] count] == 1) {
@@ -88,8 +120,8 @@ static const int REFERENCE_HEIGHT = 720;
         if (touchLocation.x != currentLocation.x ||
             touchLocation.y != currentLocation.y)
         {
-            int deltaX = (currentLocation.x - touchLocation.x) * (REFERENCE_WIDTH / view.bounds.size.width);
-            int deltaY = (currentLocation.y - touchLocation.y) * (REFERENCE_HEIGHT / view.bounds.size.height);
+            int deltaX = (currentLocation.x - touchLocation.x) * (REFERENCE_WIDTH / view.bounds.size.width) * sensitivity;
+            int deltaY = (currentLocation.y - touchLocation.y) * (REFERENCE_HEIGHT / view.bounds.size.height) * sensitivity;
             
             if (deltaX != 0 || deltaY != 0) {
                 LiSendMouseMoveEvent(deltaX, deltaY);
@@ -108,12 +140,21 @@ static const int REFERENCE_HEIGHT = 720;
         
         CGPoint avgLocation = CGPointMake((firstLocation.x + secondLocation.x) / 2, (firstLocation.y + secondLocation.y) / 2);
         if (touchLocation.y != avgLocation.y) {
-            LiSendHighResScrollEvent((avgLocation.y - touchLocation.y) * 10);
+            float scrollAmount = (avgLocation.y - touchLocation.y) * 10;
+            LiSendHighResScrollEvent((short)scrollAmount);
+
+            // Remember the scroll speed to keep scrolling with momentum after the fingers lift
+            CFTimeInterval now = CACurrentMediaTime();
+            if (now > lastScrollTime) {
+                scrollVelocity = scrollAmount / (now - lastScrollTime);
+            }
+            lastScrollTime = now;
         }
 
         // If we've moved far enough to confirm this wasn't just human/machine error,
-        // mark it as such.
-        if ([self isConfirmedMove:firstLocation from:originalLocation]) {
+        // mark it as such. The midpoint must be compared with the original midpoint,
+        // comparing a single finger to it made two finger taps (right clicks) fail.
+        if ([self isConfirmedMove:avgLocation from:originalLocation]) {
             touchMoved = true;
         }
         
@@ -122,6 +163,10 @@ static const int REFERENCE_HEIGHT = 720;
 }
 
 - (void)touchesEnded:(NSSet *)touches withEvent:(UIEvent *)event {
+    if (inertialScroll && [[event allTouches] count] == 2 && touchMoved) {
+        [self startInertialScroll];
+    }
+
     [dragTimer invalidate];
     dragTimer = nil;
     if (isDragging) {

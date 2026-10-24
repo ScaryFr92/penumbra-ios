@@ -7,6 +7,9 @@
 //
 
 #import "AppDelegate.h"
+#if !TARGET_OS_TV
+#import "StreamFrameViewController.h"
+#endif
 
 @implementation AppDelegate
 
@@ -33,6 +36,11 @@ static NSString* DB_NAME = @"Limelight_iOS.sqlite";
 }
 
 #if !TARGET_OS_TV
+// The app UI is landscape only, but a stream can also be held in portrait
+- (UIInterfaceOrientationMask)application:(UIApplication *)application supportedInterfaceOrientationsForWindow:(UIWindow *)window {
+    return [StreamFrameViewController isStreamActive] ? UIInterfaceOrientationMaskAllButUpsideDown : UIInterfaceOrientationMaskLandscape;
+}
+
 - (void)application:(UIApplication *)application performActionForShortcutItem:(UIApplicationShortcutItem *)shortcutItem completionHandler:(void (^)(BOOL succeeded))completionHandler {
     _pcUuidToLoad = (NSString*)[shortcutItem.userInfo objectForKey:@"UUID"];
     _shortcutCompletionHandler = completionHandler;

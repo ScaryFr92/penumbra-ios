@@ -9,6 +9,7 @@
 #import "SettingsViewController.h"
 #import "TemporarySettings.h"
 #import "DataManager.h"
+#import "../PenumbraSettings.h"
 
 #import <VideoToolbox/VideoToolbox.h>
 #import <AVFoundation/AVFoundation.h>
@@ -263,7 +264,77 @@ BOOL isCustomResolution(CGSize res) {
     [self.bitrateSlider addTarget:self action:@selector(bitrateSliderMoved) forControlEvents:UIControlEventValueChanged];
     [self updateBitrateText];
     [self updateResolutionDisplayViewText];
+
+#if !TARGET_OS_TV
+    [self addPenumbraSettings];
+#endif
 }
+
+#if !TARGET_OS_TV
+// Penumbra settings are appended below the storyboard ones, copying their look.
+// They are saved to NSUserDefaults as soon as they change.
+- (void) addPenumbraSettings {
+    UILabel* templateLabel = nil;
+    CGFloat bottom = 0;
+    for (UIView* view in self.scrollView.subviews) {
+        if ([view isKindOfClass:[UILabel class]] || [view isKindOfClass:[UISegmentedControl class]] || [view isKindOfClass:[UISlider class]]) {
+            bottom = MAX(bottom, CGRectGetMaxY(view.frame));
+        }
+        if (templateLabel == nil && [view isKindOfClass:[UILabel class]]) {
+            templateLabel = (UILabel*)view;
+        }
+    }
+
+    bottom = [self addSettingWithTitle:@"Touchpad Sensitivity" segments:@[@"0.5x", @"1x", @"1.5x", @"2x", @"3x"]
+                                values:@[@0.5f, @1.0f, @1.5f, @2.0f, @3.0f] key:PenumbraMouseSensitivityKey
+                                 below:bottom templateLabel:templateLabel];
+    bottom = [self addSettingWithTitle:@"Momentum Scrolling" segments:@[@"Off", @"On"]
+                                values:@[@NO, @YES] key:PenumbraInertialScrollKey
+                                 below:bottom templateLabel:templateLabel];
+    bottom = [self addSettingWithTitle:@"Native Multi-Touch (Sunshine)" segments:@[@"Off", @"On"]
+                                values:@[@NO, @YES] key:PenumbraNativeTouchKey
+                                 below:bottom templateLabel:templateLabel];
+    bottom = [self addSettingWithTitle:@"Device Motion as Gyro" segments:@[@"Off", @"On"]
+                                values:@[@NO, @YES] key:PenumbraDeviceMotionKey
+                                 below:bottom templateLabel:templateLabel];
+    [self addSettingWithTitle:@"On-Screen Controls Opacity" segments:@[@"25%", @"50%", @"75%", @"100%"]
+                       values:@[@0.25f, @0.5f, @0.75f, @1.0f] key:PenumbraOscOpacityKey
+                        below:bottom templateLabel:templateLabel];
+}
+
+- (CGFloat) addSettingWithTitle:(NSString*)title segments:(NSArray<NSString*>*)segments values:(NSArray<NSNumber*>*)values
+                            key:(NSString*)key below:(CGFloat)top templateLabel:(UILabel*)templateLabel {
+    PenumbraRegisterDefaults();
+    CGRect selectorFrame = self.touchModeSelector.frame;
+
+    UILabel* label = [[UILabel alloc] initWithFrame:CGRectMake(selectorFrame.origin.x, top + 20, selectorFrame.size.width, 21)];
+    label.text = title;
+    label.font = templateLabel.font;
+    label.textColor = templateLabel.textColor;
+    [self.scrollView addSubview:label];
+
+    UISegmentedControl* selector = [[UISegmentedControl alloc] initWithItems:segments];
+    selector.frame = CGRectMake(selectorFrame.origin.x, CGRectGetMaxY(label.frame) + 8, selectorFrame.size.width, selectorFrame.size.height);
+
+    // Select the closest value, stored floats don't compare exactly
+    float current = [[NSUserDefaults standardUserDefaults] floatForKey:key];
+    NSUInteger selectedIndex = 0;
+    for (NSUInteger i = 0; i < values.count; i++) {
+        if (fabsf(values[i].floatValue - current) < fabsf(values[selectedIndex].floatValue - current)) {
+            selectedIndex = i;
+        }
+    }
+    selector.selectedSegmentIndex = selectedIndex;
+
+    [selector addAction:[UIAction actionWithHandler:^(UIAction* action) {
+        UISegmentedControl* sender = (UISegmentedControl*)action.sender;
+        [[NSUserDefaults standardUserDefaults] setObject:values[sender.selectedSegmentIndex] forKey:key];
+    }] forControlEvents:UIControlEventValueChanged];
+    [self.scrollView addSubview:selector];
+
+    return CGRectGetMaxY(selector.frame);
+}
+#endif
 
 - (void) touchModeChanged {
     // Disable on-screen controls in absolute touch mode

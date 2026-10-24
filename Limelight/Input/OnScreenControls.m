@@ -11,6 +11,7 @@
 #import "ControllerSupport.h"
 #import "Controller.h"
 #include "Limelight.h"
+#import "../PenumbraSettings.h"
 
 #define UPDATE_BUTTON(x, y) (buttonFlags = \
 (y) ? (buttonFlags | (x)) : (buttonFlags & ~(x)))
@@ -121,19 +122,8 @@ static float L3_Y;
     _swapABXY = streamConfig.swapABXYButtons;
     
     _iPad = ([UIDevice currentDevice].userInterfaceIdiom == UIUserInterfaceIdiomPad);
-    _controlArea = CGRectMake(0, 0, _view.frame.size.width, _view.frame.size.height);
-    if (_iPad)
-    {
-        // Cut down the control area on an iPad so the controls are more reachable
-        _controlArea.size.height = _view.frame.size.height / 2.0;
-        _controlArea.origin.y = _view.frame.size.height - _controlArea.size.height;
-    }
-    else
-    {
-        _controlArea.origin.x = _controlArea.size.width * EDGE_WIDTH;
-        _controlArea.size.width -= _controlArea.origin.x * 2;
-    }
-    
+    [self updateControlArea];
+
     _aButton = [CALayer layer];
     _bButton = [CALayer layer];
     _xButton = [CALayer layer];
@@ -154,8 +144,39 @@ static float L3_Y;
     _rightStickBackground = [CALayer layer];
     _leftStick = [CALayer layer];
     _rightStick = [CALayer layer];
-    
+
+    float opacity = PenumbraOscOpacity();
+    for (CALayer* layer in @[_aButton, _bButton, _xButton, _yButton, _upButton, _downButton, _leftButton, _rightButton,
+                             _l1Button, _r1Button, _l2Button, _r2Button, _l3Button, _r3Button, _startButton, _selectButton,
+                             _leftStickBackground, _rightStickBackground, _leftStick, _rightStick]) {
+        layer.opacity = opacity;
+    }
+
     return self;
+}
+
+- (void) updateControlArea {
+    CGSize viewSize = _view.bounds.size;
+    _controlArea = CGRectMake(0, 0, viewSize.width, viewSize.height);
+    if (_iPad || viewSize.height > viewSize.width)
+    {
+        // Cut down the control area on an iPad (or in portrait, below the video)
+        // so the controls are more reachable
+        _controlArea.size.height = viewSize.height / 2.0;
+        _controlArea.origin.y = viewSize.height - _controlArea.size.height;
+    }
+    else
+    {
+        _controlArea.origin.x = _controlArea.size.width * EDGE_WIDTH;
+        _controlArea.size.width -= _controlArea.origin.x * 2;
+    }
+}
+
+- (void) relayout {
+    [self updateControlArea];
+    if (_visible) {
+        [self updateControls];
+    }
 }
 
 - (void) show {

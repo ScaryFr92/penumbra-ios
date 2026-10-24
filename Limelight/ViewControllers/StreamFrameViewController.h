@@ -23,4 +23,6 @@
 
 -(void)updatePreferredDisplayMode:(BOOL)streamActive;
 
++(BOOL)isStreamActive;
+
 @end

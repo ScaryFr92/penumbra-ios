@@ -16,6 +16,10 @@
 
 @import GameController;
 @import AudioToolbox;
+#if !TARGET_OS_TV
+@import CoreMotion;
+#import "../PenumbraSettings.h"
+#endif
 
 static const double MOUSE_SPEED_DIVISOR = 1.25;
 
@@ -43,6 +47,10 @@ static const double MOUSE_SPEED_DIVISOR = 1.25;
 #define EMULATING_SPECIAL    0x2
     
     bool _oscEnabled;
+#if !TARGET_OS_TV
+    // Only set when the user enabled the device's motion sensors
+    CMMotionManager *_motionManager;
+#endif
     char _controllerNumbers;
     bool _multiController;
     bool _swapABXYButtons;
@@ -84,15 +92,101 @@ static const double MOUSE_SPEED_DIVISOR = 1.25;
     [controller.rightTriggerMotor setMotorAmplitude:rightTrigger];
 }
 
+#if !TARGET_OS_TV
+// Maps iPhone/iPad sensor axes to the controller convention (X right, Y up, Z toward
+// the player) for the current screen orientation
+static void mapDeviceAxesToController(double deviceX, double deviceY, double deviceZ, float* x, float* y, float* z) {
+    UIInterfaceOrientation orientation = UIApplication.sharedApplication.windows.firstObject.windowScene.interfaceOrientation;
+    switch (orientation) {
+        case UIInterfaceOrientationLandscapeLeft:
+            *x = deviceY;
+            *y = -deviceX;
+            break;
+        case UIInterfaceOrientationLandscapeRight:
+            *x = -deviceY;
+            *y = deviceX;
+            break;
+        default:
+            *x = deviceX;
+            *y = deviceY;
+            break;
+    }
+    *z = deviceZ;
+}
+
+// Feeds the iPhone/iPad's own motion sensors to a controller that has none
+// (the on-screen controls, or a clip-on controller like a Backbone or Kishi)
+- (void) setDeviceMotionEventState:(Controller*)controller motionType:(uint8_t)motionType reportRateHz:(uint16_t)reportRateHz
+{
+    uint8_t controllerNumber = (uint8_t)controller.playerIndex;
+
+    dispatch_sync(dispatch_get_main_queue(), ^{
+        NSTimer* timer = nil;
+        if (reportRateHz) {
+            if (!self->_motionManager.deviceMotionActive) {
+                self->_motionManager.deviceMotionUpdateInterval = 1.0 / 100;
+                [self->_motionManager startDeviceMotionUpdates];
+            }
+
+            timer = [NSTimer scheduledTimerWithTimeInterval:1.0 / reportRateHz repeats:YES block:^(NSTimer *t) {
+                CMDeviceMotion* motion = self->_motionManager.deviceMotion;
+                if (motion == nil) {
+                    return;
+                }
+
+                float x, y, z;
+                if (motionType == LI_MOTION_TYPE_ACCEL) {
+                    // Convert g to m/s^2, including gravity like a real controller
+                    mapDeviceAxesToController(motion.gravity.x + motion.userAcceleration.x,
+                                              motion.gravity.y + motion.userAcceleration.y,
+                                              motion.gravity.z + motion.userAcceleration.z,
+                                              &x, &y, &z);
+                    LiSendControllerMotionEvent(controllerNumber, LI_MOTION_TYPE_ACCEL, x * -9.80665f, y * -9.80665f, z * -9.80665f);
+                }
+                else {
+                    // Convert rad/s to deg/s
+                    mapDeviceAxesToController(motion.rotationRate.x, motion.rotationRate.y, motion.rotationRate.z, &x, &y, &z);
+                    LiSendControllerMotionEvent(controllerNumber, LI_MOTION_TYPE_GYRO, x * 57.2957795f, y * 57.2957795f, z * 57.2957795f);
+                }
+            }];
+        }
+
+        if (motionType == LI_MOTION_TYPE_ACCEL) {
+            [controller.accelTimer invalidate];
+            controller.accelTimer = timer;
+        }
+        else {
+            [controller.gyroTimer invalidate];
+            controller.gyroTimer = timer;
+        }
+
+        // ponytail: one shared sensor feed, stopped when this controller stops; track users if several controllers ever need it
+        if (controller.accelTimer == nil && controller.gyroTimer == nil) {
+            [self->_motionManager stopDeviceMotionUpdates];
+        }
+    });
+}
+#endif
+
 - (void) setMotionEventState:(uint16_t)controllerNumber motionType:(uint8_t)motionType reportRateHz:(uint16_t)reportRateHz
 {
     if (@available(iOS 14.0, tvOS 14.0, *)) {
         Controller* controller = [_controllers objectForKey:[NSNumber numberWithInteger:controllerNumber]];
+        if (controller == nil && controllerNumber == 0 && _oscEnabled) {
+            controller = _oscController;
+        }
         if (controller == nil) {
             // No connected controller for this player
             return;
         }
-        
+
+#if !TARGET_OS_TV
+        if (_motionManager != nil && controller.gamepad.motion == nil) {
+            [self setDeviceMotionEventState:controller motionType:motionType reportRateHz:reportRateHz];
+            return;
+        }
+#endif
+
         if (controller.gamepad.motion == nil) {
             // No motion supported for this controller
             return;
@@ -618,6 +712,13 @@ static const double MOUSE_SPEED_DIVISOR = 1.25;
         }
     }
 
+#if !TARGET_OS_TV
+    if (_motionManager != nil && !(capabilities & LI_CCAP_GYRO)) {
+        // The device's own sensors stand in for the missing ones (see setDeviceMotionEventState)
+        capabilities |= LI_CCAP_ACCEL | LI_CCAP_GYRO;
+    }
+#endif
+
     // Report the new controller to the host
     // NB: This will fail if the connection hasn't been fully established yet
     // and we will try again later.
@@ -1089,7 +1190,12 @@ static const double MOUSE_SPEED_DIVISOR = 1.25;
 
     DataManager* dataMan = [[DataManager alloc] init];
     _oscEnabled = (OnScreenControlsLevel)[[dataMan getSettings].onscreenControls integerValue] != OnScreenControlsLevelOff;
-    
+#if !TARGET_OS_TV
+    if (PenumbraDeviceMotionEnabled()) {
+        _motionManager = [[CMMotionManager alloc] init];
+    }
+#endif
+
     Log(LOG_I, @"Number of supported controllers connected: %d", [ControllerSupport getGamepadCount]);
     Log(LOG_I, @"Multi-controller: %d", _multiController);
     
@@ -1255,6 +1361,11 @@ static const double MOUSE_SPEED_DIVISOR = 1.25;
         [self cleanupControllerBattery:controller];
     }
     [_controllers removeAllObjects];
+
+    [self cleanupControllerMotion:_oscController];
+#if !TARGET_OS_TV
+    [_motionManager stopDeviceMotionUpdates];
+#endif
     
     for (GCController* controller in [GCController controllers]) {
         if ([ControllerSupport isSupportedGamepad:controller]) {

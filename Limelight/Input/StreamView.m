@@ -14,6 +14,9 @@
 #import "RelativeTouchHandler.h"
 #import "AbsoluteTouchHandler.h"
 #import "KeyboardInputField.h"
+#import "../PenumbraSettings.h"
+
+@import AVFoundation;
 
 static const double X1_MOUSE_SPEED_DIVISOR = 2.5;
 
@@ -44,6 +47,9 @@ static const double X1_MOUSE_SPEED_DIVISOR = 2.5;
     BOOL hasUserInteracted;
     
     NSDictionary<NSString *, NSNumber *> *dictCodes;
+
+    BOOL nativeTouch;
+    CGSize lastLayoutSize;
 }
 
 - (void) setupStreamView:(ControllerSupport*)controllerSupport
@@ -53,7 +59,8 @@ static const double X1_MOUSE_SPEED_DIVISOR = 2.5;
     self->streamAspectRatio = (float)streamConfig.width / (float)streamConfig.height;
     
     TemporarySettings* settings = [[[DataManager alloc] init] getSettings];
-    
+    nativeTouch = PenumbraNativeTouchEnabled();
+
     keysDown = [[NSMutableSet alloc] init];
     keyInputField = [[KeyboardInputField alloc] initWithFrame:CGRectZero];
     [keyInputField setKeyboardType:UIKeyboardTypeDefault];
@@ -159,6 +166,30 @@ static const double X1_MOUSE_SPEED_DIVISOR = 2.5;
         // User is still touching the screen. Restart the timer.
         [self startInteractionTimer];
     }
+}
+
+// Keeps the video aspect-fit and the on-screen controls in place when the
+// view is resized, e.g. when rotating between landscape and portrait
+- (void)layoutSubviews {
+    [super layoutSubviews];
+
+    if (CGSizeEqualToSize(self.bounds.size, lastLayoutSize)) {
+        return;
+    }
+    lastLayoutSize = self.bounds.size;
+
+    CGSize videoSize = [self getVideoAreaSize];
+    [CATransaction begin];
+    [CATransaction setDisableActions:YES];
+    for (CALayer* layer in self.layer.sublayers) {
+        if ([layer isKindOfClass:[AVSampleBufferDisplayLayer class]]) {
+            layer.position = CGPointMake(CGRectGetMidX(self.bounds), CGRectGetMidY(self.bounds));
+            layer.bounds = CGRectMake(0, 0, videoSize.width, videoSize.height);
+        }
+    }
+    [CATransaction commit];
+
+    [onScreenControls relayout];
 }
 
 - (void) showOnScreenControls {
@@ -344,37 +375,86 @@ static const double X1_MOUSE_SPEED_DIVISOR = 2.5;
 #endif
     
     if (![onScreenControls handleTouchDownEvent:touches]) {
+#if !TARGET_OS_TV
+        if ([self isNativeTouchActive]) {
+            // Native touch passes every finger to the host, so the 3 finger
+            // keyboard gesture is left to the in-stream menu instead
+            [self sendNativeTouches:touches];
+            return;
+        }
+#endif
+
         // We still inform the touch handler even if we're going trigger the
         // keyboard activation gesture. This is important to ensure the touch
         // handler has a consistent view of touch events to correctly suppress
         // activation of one or two finger gestures when a three finger gesture
         // is triggered.
         [touchHandler touchesBegan:touches withEvent:event];
-        
+
         if ([[event allTouches] count] == 3) {
-            if (isInputingText) {
-                Log(LOG_D, @"Closing the keyboard");
-                [keyInputField resignFirstResponder];
-                isInputingText = false;
-            } else {
-                Log(LOG_D, @"Opening the keyboard");
-                // Prepare the textbox used to capture keyboard events.
-                keyInputField.delegate = self;
-                keyInputField.text = @"0";
-#if !TARGET_OS_TV
-                keyInputField.inputAccessoryView = [self createKeyboardAccessoryView];
-#endif
-                [keyInputField becomeFirstResponder];
-                [keyInputField addTarget:self action:@selector(onKeyboardPressed:) forControlEvents:UIControlEventEditingChanged];
-                
-                // Undo causes issues for our state management, so turn it off
-                [keyInputField.undoManager disableUndoRegistration];
-                
-                isInputingText = true;
-            }
+            [self toggleKeyboard];
         }
     }
 }
+
+- (void)toggleKeyboard {
+    if (isInputingText) {
+        Log(LOG_D, @"Closing the keyboard");
+        [keyInputField resignFirstResponder];
+        isInputingText = false;
+    } else {
+        Log(LOG_D, @"Opening the keyboard");
+        // Prepare the textbox used to capture keyboard events.
+        keyInputField.delegate = self;
+        keyInputField.text = @"0";
+#if !TARGET_OS_TV
+        keyInputField.inputAccessoryView = [self createKeyboardAccessoryView];
+#endif
+        [keyInputField becomeFirstResponder];
+        [keyInputField addTarget:self action:@selector(onKeyboardPressed:) forControlEvents:UIControlEventEditingChanged];
+
+        // Undo causes issues for our state management, so turn it off
+        [keyInputField.undoManager disableUndoRegistration];
+
+        isInputingText = true;
+    }
+}
+
+#if !TARGET_OS_TV
+- (BOOL)isNativeTouchActive {
+    return nativeTouch && (LiGetHostFeatureFlags() & LI_FF_PEN_TOUCH_EVENTS);
+}
+
+// Sends each finger to the host as a real touch (Sunshine only), so Windows
+// gets multi-touch, pinch zoom and touch gestures instead of an emulated mouse
+- (void)sendNativeTouches:(NSSet *)touches {
+    CGSize videoSize = [self getVideoAreaSize];
+    for (UITouch* touch in touches) {
+        uint8_t type;
+        switch (touch.phase) {
+            case UITouchPhaseBegan:
+                type = LI_TOUCH_EVENT_DOWN;
+                break;
+            case UITouchPhaseMoved:
+                type = LI_TOUCH_EVENT_MOVE;
+                break;
+            case UITouchPhaseEnded:
+                type = LI_TOUCH_EVENT_UP;
+                break;
+            case UITouchPhaseCancelled:
+                type = LI_TOUCH_EVENT_CANCEL;
+                break;
+            default:
+                continue;
+        }
+
+        CGPoint location = [self adjustCoordinatesForVideoArea:[touch locationInView:self]];
+        float contactArea = touch.majorRadius * 2 / videoSize.width;
+        LiSendTouchEvent(type, (uint32_t)(uintptr_t)touch, location.x / videoSize.width, location.y / videoSize.height,
+                         0.0f, contactArea, contactArea, LI_ROT_UNKNOWN);
+    }
+}
+#endif
 
 #if !TARGET_OS_TV
 // Toolbar above the software keyboard: a fixed Done button, then a horizontally
@@ -614,8 +694,14 @@ static const double X1_MOUSE_SPEED_DIVISOR = 2.5;
 #endif
     
     hasUserInteracted = YES;
-    
+
     if (![onScreenControls handleTouchMovedEvent:touches]) {
+#if !TARGET_OS_TV
+        if ([self isNativeTouchActive]) {
+            [self sendNativeTouches:touches];
+            return;
+        }
+#endif
         [touchHandler touchesMoved:touches withEvent:event];
     }
 }
@@ -683,11 +769,22 @@ static const double X1_MOUSE_SPEED_DIVISOR = 2.5;
 #endif
     
     if (![onScreenControls handleTouchUpEvent:touches]) {
+#if !TARGET_OS_TV
+        if ([self isNativeTouchActive]) {
+            [self sendNativeTouches:touches];
+            return;
+        }
+#endif
         [touchHandler touchesEnded:touches withEvent:event];
     }
 }
 
 - (void)touchesCancelled:(NSSet *)touches withEvent:(UIEvent *)event {
+#if !TARGET_OS_TV
+    if ([self isNativeTouchActive]) {
+        [self sendNativeTouches:touches];
+    }
+#endif
     [touchHandler touchesCancelled:touches withEvent:event];
     [self handleMouseButtonEvent:BUTTON_ACTION_RELEASE
                       forTouches:touches

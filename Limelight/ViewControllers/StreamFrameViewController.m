@@ -12,6 +12,7 @@
 #import "StreamManager.h"
 #import "ControllerSupport.h"
 #import "DataManager.h"
+#import "../PenumbraSettings.h"
 
 #include <sys/socket.h>
 #include <netinet/in.h>
@@ -29,6 +30,69 @@
 @property(readonly, nonatomic) float refreshRate;
 - (id)initWithRefreshRate:(float)arg1 videoDynamicRange:(int)arg2;
 @end
+
+static BOOL streamActive;
+
+#if !TARGET_OS_TV
+// Presses the keys in order and releases them in reverse, like a person typing a shortcut
+static void sendKeyCombo(NSArray<NSNumber*>* keys) {
+    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_HIGH, 0), ^{
+        char modifiers = 0;
+        for (NSNumber* key in keys) {
+            switch (key.shortValue) {
+                case 0xA0: modifiers |= MODIFIER_SHIFT; break;
+                case 0xA2: modifiers |= MODIFIER_CTRL; break;
+                case 0xA4: modifiers |= MODIFIER_ALT; break;
+                case 0x5B: modifiers |= MODIFIER_META; break;
+            }
+            LiSendKeyboardEvent(key.shortValue, KEY_ACTION_DOWN, modifiers);
+        }
+        usleep(50 * 1000);
+        for (NSNumber* key in [keys reverseObjectEnumerator]) {
+            LiSendKeyboardEvent(key.shortValue, KEY_ACTION_UP, modifiers);
+        }
+    });
+}
+
+// Parses a shortcut typed by the user like "ctrl+shift+esc" or "win+d" into Windows key codes.
+// Returns nil if any part is unknown.
+static NSArray<NSNumber*>* parseKeyCombo(NSString* text) {
+    static NSDictionary<NSString*, NSNumber*>* namedKeys;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        namedKeys = @{
+            @"ctrl": @0xA2, @"control": @0xA2, @"alt": @0xA4, @"shift": @0xA0,
+            @"win": @0x5B, @"cmd": @0x5B, @"meta": @0x5B,
+            @"esc": @0x1B, @"escape": @0x1B, @"tab": @0x09, @"enter": @0x0D, @"space": @0x20,
+            @"del": @0x2E, @"delete": @0x2E, @"backspace": @0x08, @"insert": @0x2D,
+            @"up": @0x26, @"down": @0x28, @"left": @0x25, @"right": @0x27,
+            @"home": @0x24, @"end": @0x23, @"pgup": @0x21, @"pgdn": @0x22, @"printscreen": @0x2C,
+        };
+    });
+
+    NSMutableArray<NSNumber*>* keys = [NSMutableArray array];
+    for (NSString* part in [[text lowercaseString] componentsSeparatedByString:@"+"]) {
+        NSString* name = [part stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
+        unichar c = name.length == 1 ? [name characterAtIndex:0] : 0;
+        if (namedKeys[name] != nil) {
+            [keys addObject:namedKeys[name]];
+        }
+        else if (c >= 'a' && c <= 'z') {
+            [keys addObject:@(c - 'a' + 0x41)];
+        }
+        else if (c >= '0' && c <= '9') {
+            [keys addObject:@(c)];
+        }
+        else if (name.length >= 2 && [name characterAtIndex:0] == 'f' && [name substringFromIndex:1].intValue >= 1 && [name substringFromIndex:1].intValue <= 24) {
+            [keys addObject:@(0x70 + [name substringFromIndex:1].intValue - 1)];
+        }
+        else {
+            return nil;
+        }
+    }
+    return keys;
+}
+#endif
 
 @implementation StreamFrameViewController {
     ControllerSupport *_controllerSupport;
@@ -56,10 +120,48 @@
 - (void)viewDidAppear:(BOOL)animated
 {
     [super viewDidAppear:animated];
-    
+
 #if !TARGET_OS_TV
     [[self revealViewController] setPrimaryViewController:self];
+
+    // Let the stream follow the device into portrait
+    streamActive = YES;
+    [self refreshSupportedOrientations];
 #endif
+}
+
++ (BOOL)isStreamActive {
+    return streamActive;
+}
+
+#if !TARGET_OS_TV
+- (void)refreshSupportedOrientations {
+    if (@available(iOS 16.0, *)) {
+        [self.view.window.rootViewController setNeedsUpdateOfSupportedInterfaceOrientations];
+        if (!streamActive) {
+            UIWindowSceneGeometryPreferencesIOS* preferences = [[UIWindowSceneGeometryPreferencesIOS alloc] initWithInterfaceOrientations:UIInterfaceOrientationMaskLandscape];
+            [self.view.window.windowScene requestGeometryUpdateWithPreferences:preferences errorHandler:nil];
+        }
+    }
+    else {
+        [UIViewController attemptRotationToDeviceOrientation];
+    }
+}
+#endif
+
+- (void)viewDidLayoutSubviews {
+    [super viewDidLayoutSubviews];
+
+    // Follow rotations between landscape and portrait
+    if (_scrollView != nil) {
+        _scrollView.frame = self.view.bounds;
+        if (_scrollView.zoomScale == 1.0f) {
+            _streamView.frame = _scrollView.bounds;
+        }
+    }
+    else {
+        _streamView.frame = self.view.bounds;
+    }
 }
 
 #if TARGET_OS_TV
@@ -129,7 +231,7 @@
     [self.view addGestureRecognizer:_playPauseTapGestureRecognizer];
 
 #else
-    _exitSwipeRecognizer = [[UIScreenEdgePanGestureRecognizer alloc] initWithTarget:self action:@selector(edgeSwiped)];
+    _exitSwipeRecognizer = [[UIScreenEdgePanGestureRecognizer alloc] initWithTarget:self action:@selector(edgeSwiped:)];
     _exitSwipeRecognizer.edges = UIRectEdgeLeft;
     _exitSwipeRecognizer.delaysTouchesBegan = NO;
     _exitSwipeRecognizer.delaysTouchesEnded = NO;
@@ -143,7 +245,7 @@
 #if TARGET_OS_TV
     [_tipLabel setText:@"Tip: Tap the Play/Pause button on the Apple TV Remote to disconnect from your PC"];
 #else
-    [_tipLabel setText:@"Tip: Swipe from the left edge to disconnect from your PC"];
+    [_tipLabel setText:@"Tip: Swipe from the left edge to open the menu"];
 #endif
     
     [_tipLabel sizeToFit];
@@ -218,6 +320,7 @@
 - (void)willMoveToParentViewController:(UIViewController *)parent {
     // Only cleanup when we're being destroyed
     if (parent == nil) {
+        streamActive = NO;
         [_controllerSupport cleanup];
         [UIApplication sharedApplication].idleTimerDisabled = NO;
         [_streamMan stopStream];
@@ -311,7 +414,13 @@
     
     [_statsUpdateTimer invalidate];
     _statsUpdateTimer = nil;
-    
+
+    // Rotate back to landscape while our view is still in the window
+#if !TARGET_OS_TV
+    streamActive = NO;
+    [self refreshSupportedOrientations];
+#endif
+
     [self.navigationController popToRootViewControllerAnimated:YES];
 }
 
@@ -361,11 +470,143 @@
     [self returnToMainFrame];
 }
 
-- (void)edgeSwiped {
-    Log(LOG_I, @"User swiped to end stream");
-    
-    [self returnToMainFrame];
+#if !TARGET_OS_TV
+- (void)edgeSwiped:(UIScreenEdgePanGestureRecognizer *)gesture {
+    // The recognizer keeps firing while the finger moves, only react once
+    if (gesture.state != UIGestureRecognizerStateBegan || self.presentedViewController != nil) {
+        return;
+    }
+
+    Log(LOG_I, @"User swiped to open the stream menu");
+    [self showStreamMenu];
 }
+
+- (void)presentMenu:(UIAlertController *)menu {
+    // Action sheets need an anchor on iPad
+    menu.popoverPresentationController.sourceView = self.view;
+    menu.popoverPresentationController.sourceRect = CGRectMake(0, self.view.bounds.size.height / 2, 1, 1);
+    [self presentViewController:menu animated:YES completion:nil];
+}
+
+- (void)showStreamMenu {
+    UIAlertController* menu = [UIAlertController alertControllerWithTitle:nil message:nil preferredStyle:UIAlertControllerStyleActionSheet];
+
+    [menu addAction:[UIAlertAction actionWithTitle:@"Keyboard" style:UIAlertActionStyleDefault handler:^(UIAlertAction* action) {
+        [self->_streamView toggleKeyboard];
+    }]];
+    [menu addAction:[UIAlertAction actionWithTitle:@"Paste Clipboard Text" style:UIAlertActionStyleDefault handler:^(UIAlertAction* action) {
+        NSString* text = [UIPasteboard generalPasteboard].string;
+        if (text.length > 0) {
+            const char* utf8String = [text UTF8String];
+            LiSendUtf8TextEvent(utf8String, (unsigned int)strlen(utf8String));
+        }
+    }]];
+    [menu addAction:[UIAlertAction actionWithTitle:@"Keyboard Shortcuts…" style:UIAlertActionStyleDefault handler:^(UIAlertAction* action) {
+        [self showShortcutsMenu];
+    }]];
+    [menu addAction:[UIAlertAction actionWithTitle:@"Switch Display…" style:UIAlertActionStyleDefault handler:^(UIAlertAction* action) {
+        [self showDisplayMenu];
+    }]];
+    [menu addAction:[UIAlertAction actionWithTitle:@"Disconnect" style:UIAlertActionStyleDestructive handler:^(UIAlertAction* action) {
+        [self returnToMainFrame];
+    }]];
+    [menu addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:nil]];
+
+    [self presentMenu:menu];
+}
+
+- (void)showDisplayMenu {
+    // Sunshine switches the streamed monitor on Ctrl+Alt+Shift+F1..F12
+    UIAlertController* menu = [UIAlertController alertControllerWithTitle:@"Switch Display" message:@"Requires a Sunshine host" preferredStyle:UIAlertControllerStyleActionSheet];
+    for (int i = 0; i < 4; i++) {
+        [menu addAction:[UIAlertAction actionWithTitle:[NSString stringWithFormat:@"Display %d", i + 1] style:UIAlertActionStyleDefault handler:^(UIAlertAction* action) {
+            sendKeyCombo(@[@0xA2, @0xA4, @0xA0, @(0x70 + i)]);
+        }]];
+    }
+    [menu addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:nil]];
+
+    [self presentMenu:menu];
+}
+
+- (void)showShortcutsMenu {
+    UIAlertController* menu = [UIAlertController alertControllerWithTitle:@"Keyboard Shortcuts" message:nil preferredStyle:UIAlertControllerStyleActionSheet];
+
+    NSArray<NSArray*>* builtInShortcuts = @[
+        @[@"Alt+Tab", @[@0xA4, @0x09]],
+        @[@"Alt+F4", @[@0xA4, @0x73]],
+        @[@"Start Menu (Win)", @[@0x5B]],
+        @[@"Show Desktop (Win+D)", @[@0x5B, @0x44]],
+        @[@"Task Manager (Ctrl+Shift+Esc)", @[@0xA2, @0xA0, @0x1B]],
+        @[@"Screenshot (Win+Shift+S)", @[@0x5B, @0xA0, @0x53]],
+    ];
+    for (NSArray* shortcut in builtInShortcuts) {
+        [menu addAction:[UIAlertAction actionWithTitle:shortcut[0] style:UIAlertActionStyleDefault handler:^(UIAlertAction* action) {
+            sendKeyCombo(shortcut[1]);
+        }]];
+    }
+
+    for (NSString* shortcut in PenumbraCustomShortcuts()) {
+        [menu addAction:[UIAlertAction actionWithTitle:shortcut style:UIAlertActionStyleDefault handler:^(UIAlertAction* action) {
+            NSArray<NSNumber*>* keys = parseKeyCombo(shortcut);
+            if (keys != nil) {
+                sendKeyCombo(keys);
+            }
+        }]];
+    }
+
+    [menu addAction:[UIAlertAction actionWithTitle:@"Add Shortcut…" style:UIAlertActionStyleDefault handler:^(UIAlertAction* action) {
+        [self promptAddShortcut];
+    }]];
+    if (PenumbraCustomShortcuts().count > 0) {
+        [menu addAction:[UIAlertAction actionWithTitle:@"Remove Shortcut…" style:UIAlertActionStyleDestructive handler:^(UIAlertAction* action) {
+            [self showRemoveShortcutMenu];
+        }]];
+    }
+    [menu addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:nil]];
+
+    [self presentMenu:menu];
+}
+
+- (void)promptAddShortcut {
+    UIAlertController* alert = [UIAlertController alertControllerWithTitle:@"Add Shortcut"
+                                                                   message:@"Keys separated by +, for example ctrl+shift+esc, win+e or alt+f4"
+                                                            preferredStyle:UIAlertControllerStyleAlert];
+    [alert addTextFieldWithConfigurationHandler:^(UITextField* textField) {
+        textField.placeholder = @"ctrl+alt+t";
+        textField.autocapitalizationType = UITextAutocapitalizationTypeNone;
+        textField.autocorrectionType = UITextAutocorrectionTypeNo;
+    }];
+    __weak UIAlertController* weakAlert = alert;
+    [alert addAction:[UIAlertAction actionWithTitle:@"Add" style:UIAlertActionStyleDefault handler:^(UIAlertAction* action) {
+        NSString* shortcut = [weakAlert.textFields[0].text stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
+        if (parseKeyCombo(shortcut) == nil) {
+            UIAlertController* error = [UIAlertController alertControllerWithTitle:@"Unknown Key"
+                                                                           message:@"Use letters, digits, f1-f24 and key names like ctrl, alt, shift, win, esc, tab, enter, space, del, up, down, left, right, home, end."
+                                                                    preferredStyle:UIAlertControllerStyleAlert];
+            [error addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
+            [self presentViewController:error animated:YES completion:nil];
+            return;
+        }
+        PenumbraSetCustomShortcuts([PenumbraCustomShortcuts() arrayByAddingObject:shortcut]);
+    }]];
+    [alert addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:nil]];
+    [self presentViewController:alert animated:YES completion:nil];
+}
+
+- (void)showRemoveShortcutMenu {
+    UIAlertController* menu = [UIAlertController alertControllerWithTitle:@"Remove Shortcut" message:nil preferredStyle:UIAlertControllerStyleActionSheet];
+    for (NSString* shortcut in PenumbraCustomShortcuts()) {
+        [menu addAction:[UIAlertAction actionWithTitle:shortcut style:UIAlertActionStyleDestructive handler:^(UIAlertAction* action) {
+            NSMutableArray* shortcuts = [PenumbraCustomShortcuts() mutableCopy];
+            [shortcuts removeObject:shortcut];
+            PenumbraSetCustomShortcuts(shortcuts);
+        }]];
+    }
+    [menu addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:nil]];
+
+    [self presentMenu:menu];
+}
+#endif
 
 - (void) connectionStarted {
     Log(LOG_I, @"Connection started");
