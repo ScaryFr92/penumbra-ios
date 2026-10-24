@@ -24,5 +24,7 @@
 
 - (id) initWithApp:(TemporaryApp*)app cache:(NSCache*)cache andCallback:(id<AppCallback>)callback;
 - (void) updateAppImage;
++ (CGSize) preferredSize;
++ (CGFloat) coverHeightRatio;
 
 @end

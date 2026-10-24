@@ -26,6 +26,7 @@
 #import "TemporaryApp.h"
 #import "IdManager.h"
 #import "ConnectionHelper.h"
+#import "../PenumbraTheme.h"
 
 #if !TARGET_OS_TV
 #import "SettingsViewController.h"
@@ -118,13 +119,15 @@ static NSMutableSet* hostList;
 
 - (void)disableUpButton {
 #if !TARGET_OS_TV
+    [self->_upButton setImage:nil];
     [self->_upButton setTitle:nil];
 #endif
 }
 
 - (void)enableUpButton {
 #if !TARGET_OS_TV
-    [self->_upButton setTitle:@"Select New Host"];
+    [self->_upButton setImage:[UIImage systemImageNamed:@"chevron.left"]];
+    self->_upButton.accessibilityLabel = @"Retour aux PC";
 #endif
 }
 
@@ -133,10 +136,73 @@ static NSMutableSet* hostList;
         self.title = _selectedHost.name;
     }
     else if ([hostList count] == 0) {
-        self.title = @"Searching for PCs on your network...";
+        self.title = @"Recherche de PC sur ton réseau…";
     }
     else {
-        self.title = @"Select Host";
+        self.title = @"Tes PC";
+    }
+}
+
+// The "eclipse" look from PenumbraTheme.h: dark ground, plain bar, icon buttons
+- (void)applyPenumbraStyle {
+    self.collectionView.backgroundColor = PenumbraGroundColor();
+    self.collectionView.indicatorStyle = UIScrollViewIndicatorStyleWhite;
+
+    UINavigationBarAppearance* appearance = [[UINavigationBarAppearance alloc] init];
+    [appearance configureWithOpaqueBackground];
+    appearance.backgroundColor = PenumbraGroundColor();
+    appearance.shadowColor = [UIColor clearColor];
+    appearance.titleTextAttributes = @{
+        NSForegroundColorAttributeName: PenumbraTextColor(),
+        NSFontAttributeName: [UIFont systemFontOfSize:[UIFont labelFontSize] weight:UIFontWeightBold],
+    };
+    UINavigationBar* navigationBar = self.navigationController.navigationBar;
+    navigationBar.standardAppearance = appearance;
+    navigationBar.scrollEdgeAppearance = appearance;
+    navigationBar.tintColor = PenumbraMutedTextColor();
+
+#if !TARGET_OS_TV
+    navigationBar.compactAppearance = appearance;
+
+    // Back to the PC list on the left and settings on the right, like iOS apps do
+    [_settingsButton setTitle:nil];
+    [_settingsButton setImage:[UIImage systemImageNamed:@"gearshape"]];
+    _settingsButton.accessibilityLabel = @"Réglages";
+    self.navigationItem.leftBarButtonItem = _upButton;
+    self.navigationItem.rightBarButtonItem = _settingsButton;
+
+    [self.collectionView registerClass:[UICollectionReusableView class]
+            forSupplementaryViewOfKind:UICollectionElementKindSectionHeader
+                   withReuseIdentifier:@"RunningAppHeader"];
+#endif
+}
+
+// Fits as many covers as possible per row, at least a minimum width each
+- (void)viewDidLayoutSubviews {
+    [super viewDidLayoutSubviews];
+
+    UICollectionViewFlowLayout* layout = (UICollectionViewFlowLayout*)self.collectionView.collectionViewLayout;
+#if TARGET_OS_TV
+    CGFloat minCoverWidth = 220, spacing = 50, margin = 80;
+#else
+    BOOL iPad = UI_USER_INTERFACE_IDIOM() == UIUserInterfaceIdiomPad;
+    CGFloat minCoverWidth = iPad ? 150 : 104, spacing = 16, margin = 28;
+#endif
+    UIEdgeInsets contentInset = self.collectionView.contentInset;
+    CGFloat available = self.collectionView.bounds.size.width - contentInset.left - contentInset.right - 2 * margin;
+    NSInteger columns = MAX(2, (NSInteger)floor((available + spacing) / (minCoverWidth + spacing)));
+    CGFloat coverWidth = floor((available - spacing * (columns - 1)) / columns);
+
+    // UIAppView is a cover plus a title, scaled to the cell width
+    CGSize appViewSize = [UIAppView preferredSize];
+    CGSize itemSize = CGSizeMake(coverWidth, round(coverWidth * appViewSize.height / appViewSize.width));
+
+    if (!CGSizeEqualToSize(layout.itemSize, itemSize)) {
+        layout.itemSize = itemSize;
+        layout.minimumInteritemSpacing = spacing;
+        layout.minimumLineSpacing = spacing * 1.25;
+        layout.sectionInset = UIEdgeInsetsMake(spacing, margin, margin, margin);
+        [layout invalidateLayout];
     }
 }
 
@@ -754,66 +820,7 @@ static NSMutableSet* hostList;
     if (currentApp != nil) {
         [alertController addAction:[UIAlertAction actionWithTitle:
                                     [app.id isEqualToString:currentApp.id] ? @"Quit App" : @"Quit Running App and Start" style:UIAlertActionStyleDestructive handler:^(UIAlertAction* action){
-                                        Log(LOG_I, @"Quitting application: %@", currentApp.name);
-                                        [self showLoadingFrame: ^{
-                                            dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
-                                                HttpManager* hMan = [[HttpManager alloc] initWithHost:app.host];
-                                                HttpResponse* quitResponse = [[HttpResponse alloc] init];
-                                                HttpRequest* quitRequest = [HttpRequest requestForResponse: quitResponse withUrlRequest:[hMan newQuitAppRequest]];
-                                                
-                                                // Exempt this host from discovery while handling the quit operation
-                                                [self->_discMan pauseDiscoveryForHost:app.host];
-                                                [hMan executeRequestSynchronously:quitRequest];
-                                                if (quitResponse.statusCode == 200) {
-                                                    ServerInfoResponse* serverInfoResp = [[ServerInfoResponse alloc] init];
-                                                    [hMan executeRequestSynchronously:[HttpRequest requestForResponse:serverInfoResp withUrlRequest:[hMan newServerInfoRequest:false]
-                                                                                                        fallbackError:401 fallbackRequest:[hMan newHttpServerInfoRequest]]];
-                                                    if (![serverInfoResp isStatusOk] || [[serverInfoResp getStringTag:@"state"] hasSuffix:@"_SERVER_BUSY"]) {
-                                                        // On newer GFE versions, the quit request succeeds even though the app doesn't
-                                                        // really quit if another client tries to kill your app. We'll patch the response
-                                                        // to look like the old error in that case, so the UI behaves.
-                                                        quitResponse.statusCode = 599;
-                                                    }
-                                                    else if ([serverInfoResp isStatusOk]) {
-                                                        // Update the host object with this info
-                                                        [serverInfoResp populateHost:app.host];
-                                                    }
-                                                }
-                                                [self->_discMan resumeDiscoveryForHost:app.host];
-
-                                                // If it fails, display an error and stop the current operation
-                                                if (quitResponse.statusCode != 200) {
-                                                    UIAlertController* alert = [UIAlertController alertControllerWithTitle:@"Quitting App Failed"
-                                                                                                message:@"Failed to quit app. If this app was started by "
-                                                             "another device, you'll need to quit from that device."
-                                                                                         preferredStyle:UIAlertControllerStyleAlert];
-                                                    [alert addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
-                                                    dispatch_async(dispatch_get_main_queue(), ^{
-                                                        [self updateAppsForHost:app.host];
-                                                        [self hideLoadingFrame: ^{
-                                                            [[self activeViewController] presentViewController:alert animated:YES completion:nil];
-                                                        }];
-                                                    });
-                                                }
-                                                else {
-                                                    app.host.currentGame = @"0";
-                                                    dispatch_async(dispatch_get_main_queue(), ^{
-                                                        // If it succeeds and we're to start streaming, segue to the stream
-                                                        if (![app.id isEqualToString:currentApp.id]) {
-                                                            [self prepareToStreamApp:app];
-                                                            [self hideLoadingFrame: ^{
-                                                                [self performSegueWithIdentifier:@"createStreamFrame" sender:nil];
-                                                            }];
-                                                        }
-                                                        else {
-                                                            // Otherwise, just hide the loading icon
-                                                            [self hideLoadingFrame:nil];
-                                                        }
-                                                    });
-                                                }
-                                            });
-                                        }];
-                                        
+                                        [self quitRunningApp:currentApp thenStartApp:app];
                                     }]];
     }
 
@@ -836,6 +843,70 @@ static NSMutableSet* hostList;
     
     alertController.popoverPresentationController.sourceRect = CGRectMake(view.bounds.size.width / 2.0, view.bounds.size.height / 2.0, 1.0, 1.0); // center of the view
     [[self activeViewController] presentViewController:alertController animated:YES completion:nil];
+}
+
+// Quits the running game, then starts app if it is a different one
+- (void) quitRunningApp:(TemporaryApp*)currentApp thenStartApp:(TemporaryApp*)app {
+    Log(LOG_I, @"Quitting application: %@", currentApp.name);
+    [self showLoadingFrame: ^{
+        dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+            HttpManager* hMan = [[HttpManager alloc] initWithHost:app.host];
+            HttpResponse* quitResponse = [[HttpResponse alloc] init];
+            HttpRequest* quitRequest = [HttpRequest requestForResponse: quitResponse withUrlRequest:[hMan newQuitAppRequest]];
+            
+            // Exempt this host from discovery while handling the quit operation
+            [self->_discMan pauseDiscoveryForHost:app.host];
+            [hMan executeRequestSynchronously:quitRequest];
+            if (quitResponse.statusCode == 200) {
+                ServerInfoResponse* serverInfoResp = [[ServerInfoResponse alloc] init];
+                [hMan executeRequestSynchronously:[HttpRequest requestForResponse:serverInfoResp withUrlRequest:[hMan newServerInfoRequest:false]
+                                                                    fallbackError:401 fallbackRequest:[hMan newHttpServerInfoRequest]]];
+                if (![serverInfoResp isStatusOk] || [[serverInfoResp getStringTag:@"state"] hasSuffix:@"_SERVER_BUSY"]) {
+                    // On newer GFE versions, the quit request succeeds even though the app doesn't
+                    // really quit if another client tries to kill your app. We'll patch the response
+                    // to look like the old error in that case, so the UI behaves.
+                    quitResponse.statusCode = 599;
+                }
+                else if ([serverInfoResp isStatusOk]) {
+                    // Update the host object with this info
+                    [serverInfoResp populateHost:app.host];
+                }
+            }
+            [self->_discMan resumeDiscoveryForHost:app.host];
+
+            // If it fails, display an error and stop the current operation
+            if (quitResponse.statusCode != 200) {
+                UIAlertController* alert = [UIAlertController alertControllerWithTitle:@"Quitting App Failed"
+                                                            message:@"Failed to quit app. If this app was started by "
+                         "another device, you'll need to quit from that device."
+                                                     preferredStyle:UIAlertControllerStyleAlert];
+                [alert addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
+                dispatch_async(dispatch_get_main_queue(), ^{
+                    [self updateAppsForHost:app.host];
+                    [self hideLoadingFrame: ^{
+                        [[self activeViewController] presentViewController:alert animated:YES completion:nil];
+                    }];
+                });
+            }
+            else {
+                app.host.currentGame = @"0";
+                dispatch_async(dispatch_get_main_queue(), ^{
+                    // If it succeeds and we're to start streaming, segue to the stream
+                    if (![app.id isEqualToString:currentApp.id]) {
+                        [self prepareToStreamApp:app];
+                        [self hideLoadingFrame: ^{
+                            [self performSegueWithIdentifier:@"createStreamFrame" sender:nil];
+                        }];
+                    }
+                    else {
+                        // Otherwise, just hide the loading icon and drop the running game banner
+                        [self.collectionView reloadData];
+                        [self hideLoadingFrame:nil];
+                    }
+                });
+            }
+        });
+    }];
 }
 
 - (void) appClicked:(TemporaryApp *)app view:(UIView *)view {
@@ -977,9 +1048,15 @@ static NSMutableSet* hostList;
     }
     
     _boxArtCache = [[NSCache alloc] init];
-        
+
+    [self applyPenumbraStyle];
+
+    // The PC cards sit in a row near the top, with room for their shadows and focus growth
     hostScrollView = [[ComputerScrollView alloc] init];
-    hostScrollView.frame = CGRectMake(0, self.navigationController.navigationBar.frame.origin.y + self.navigationController.navigationBar.frame.size.height, self.view.frame.size.width, self.view.frame.size.height / 2);
+    CGFloat hostCardHeight = [[UIComputerView alloc] initForAddWithCallback:nil].frame.size.height;
+    hostScrollView.frame = CGRectMake(0, hostCardHeight * 0.15, self.view.frame.size.width, hostCardHeight * 1.4);
+    hostScrollView.autoresizingMask = UIViewAutoresizingFlexibleWidth;
+    hostScrollView.clipsToBounds = NO;
     [hostScrollView setShowsHorizontalScrollIndicator:NO];
     hostScrollView.delaysContentTouches = NO;
     
@@ -1101,12 +1178,7 @@ static NSMutableSet* hostList;
 #endif
     
     [self.navigationController setNavigationBarHidden:NO animated:YES];
-    
-    // Hide 1px border line
-    UIImage* fakeImage = [[UIImage alloc] init];
-    [self.navigationController.navigationBar setShadowImage:fakeImage];
-    [self.navigationController.navigationBar setBackgroundImage:fakeImage forBarPosition:UIBarPositionAny barMetrics:UIBarMetricsDefault];
-    
+
     // Check for a pending shortcut action when appearing
     [self handlePendingShortcutAction];
     
@@ -1260,14 +1332,17 @@ static NSMutableSet* hostList;
 - (float) getCompViewX:(UIComputerView*)comp addComp:(UIComputerView*)addComp prevEdge:(float)prevEdge {
     float padding;
     
+    // Same margin as the game grid before the first card, then a gap between cards
 #if TARGET_OS_TV
-    padding = 100;
+    padding = 60;
+    float margin = 80;
 #else
-    padding = addComp.frame.size.width / 2;
+    padding = 16;
+    float margin = 28;
 #endif
-    
+
     if (prevEdge == -1) {
-        return hostScrollView.frame.origin.x + comp.frame.size.width / 2 + padding;
+        return hostScrollView.frame.origin.x + comp.frame.size.width / 2 + margin;
     } else {
         return prevEdge + comp.frame.size.width / 2 + padding;
     }
@@ -1359,16 +1434,18 @@ static NSMutableSet* hostList;
     [cell addSubview:appView];
     
     // Shadow opacity is controlled inside UIAppView based on whether the app
-    // is hidden or not during the update cycle.
-    UIBezierPath *shadowPath = [UIBezierPath bezierPathWithRect:cell.bounds];
+    // is hidden or not during the update cycle. The shadow follows the cover only,
+    // not the title under it.
+    CGRect coverRect = CGRectMake(0, 0, cell.bounds.size.width, cell.bounds.size.height * [UIAppView coverHeightRatio]);
+    UIBezierPath *shadowPath = [UIBezierPath bezierPathWithRoundedRect:coverRect cornerRadius:cell.bounds.size.width * 14 / 104];
     cell.layer.masksToBounds = NO;
+    cell.clipsToBounds = NO;
     cell.layer.shadowColor = [UIColor blackColor].CGColor;
-    cell.layer.shadowOffset = CGSizeMake(1.0f, 5.0f);
+    cell.layer.shadowOffset = CGSizeMake(0, 8.0f);
+    cell.layer.shadowRadius = 10.0f;
     cell.layer.shadowPath = shadowPath.CGPath;
-    
+
 #if !TARGET_OS_TV
-    cell.layer.borderWidth = 1;
-    cell.layer.borderColor = [[UIColor colorWithRed:0 green:0 blue:0 alpha:0.3f] CGColor];
     cell.exclusiveTouch = YES;
 #endif
 
@@ -1387,6 +1464,121 @@ static NSMutableSet* hostList;
         return 0;
     }
 }
+
+#if !TARGET_OS_TV
+- (CGSize)collectionView:(UICollectionView *)collectionView layout:(UICollectionViewLayout *)collectionViewLayout referenceSizeForHeaderInSection:(NSInteger)section {
+    BOOL showBanner = _selectedHost != nil && _sortedAppList != nil && [self findRunningApp:_selectedHost] != nil;
+    return CGSizeMake(collectionView.bounds.size.width, showBanner ? 100 : 0);
+}
+
+// A card for the game running on the PC, with Resume and Quit buttons
+- (UICollectionReusableView *)collectionView:(UICollectionView *)collectionView viewForSupplementaryElementOfKind:(NSString *)kind atIndexPath:(NSIndexPath *)indexPath {
+    UICollectionReusableView* header = [collectionView dequeueReusableSupplementaryViewOfKind:kind withReuseIdentifier:@"RunningAppHeader" forIndexPath:indexPath];
+    [header.subviews makeObjectsPerformSelector:@selector(removeFromSuperview)];
+
+    TemporaryApp* runningApp = [self findRunningApp:_selectedHost];
+    if (runningApp == nil) {
+        return header;
+    }
+
+    UIView* banner = [[UIView alloc] initWithFrame:CGRectMake(28, 20, header.bounds.size.width - 56, 76)];
+    banner.autoresizingMask = UIViewAutoresizingFlexibleWidth;
+    banner.backgroundColor = PenumbraSurfaceColor();
+    banner.layer.cornerRadius = 20;
+    banner.layer.borderWidth = 1;
+    banner.layer.borderColor = [PenumbraAccentColor() colorWithAlphaComponent:0.35].CGColor;
+    [header addSubview:banner];
+
+    UIImageView* cover = [[UIImageView alloc] initWithFrame:CGRectMake(12, 8, 45, 60)];
+    cover.image = [_boxArtCache objectForKey:runningApp] ?: [UIImage imageWithContentsOfFile:[AppAssetManager boxArtPathForApp:runningApp]];
+    cover.backgroundColor = PenumbraTileColor(runningApp.name);
+    cover.contentMode = UIViewContentModeScaleAspectFill;
+    cover.layer.cornerRadius = 10;
+    cover.clipsToBounds = YES;
+    [banner addSubview:cover];
+
+    UILabel* caption = [[UILabel alloc] initWithFrame:CGRectMake(72, 17, 200, 14)];
+    caption.text = @"EN COURS";
+    caption.font = [UIFont systemFontOfSize:11 weight:UIFontWeightBold];
+    caption.textColor = PenumbraAccentColor();
+    [banner addSubview:caption];
+
+    UIButton* quitButton = [self bannerButtonWithTitle:@"Quitter" filled:NO action:@selector(quitRunningAppTapped:)];
+    quitButton.frame = CGRectMake(banner.bounds.size.width - 16 - 96, 16, 96, 44);
+    [banner addSubview:quitButton];
+
+    UIButton* resumeButton = [self bannerButtonWithTitle:@"Reprendre" filled:YES action:@selector(resumeRunningAppTapped:)];
+    resumeButton.frame = CGRectMake(quitButton.frame.origin.x - 10 - 134, 16, 134, 44);
+    [banner addSubview:resumeButton];
+
+    UILabel* name = [[UILabel alloc] initWithFrame:CGRectMake(72, 33, resumeButton.frame.origin.x - 72 - 12, 24)];
+    name.autoresizingMask = UIViewAutoresizingFlexibleWidth;
+    name.text = runningApp.name;
+    name.font = [UIFont systemFontOfSize:17 weight:UIFontWeightBold];
+    name.textColor = PenumbraTextColor();
+    [banner addSubview:name];
+
+    return header;
+}
+
+- (UIButton*)bannerButtonWithTitle:(NSString*)title filled:(BOOL)filled action:(SEL)action {
+    UIButton* button = [UIButton buttonWithType:UIButtonTypeSystem];
+    button.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin;
+    [button setTitle:title forState:UIControlStateNormal];
+    button.layer.cornerRadius = 22;
+
+    if (filled) {
+        button.titleLabel.font = [UIFont systemFontOfSize:15 weight:UIFontWeightBold];
+        button.backgroundColor = PenumbraAccentColor();
+        button.tintColor = PenumbraOnAccentColor();
+        [button setTitleColor:PenumbraOnAccentColor() forState:UIControlStateNormal];
+        UIImageSymbolConfiguration* config = [UIImageSymbolConfiguration configurationWithPointSize:12 weight:UIImageSymbolWeightBold];
+        [button setImage:[UIImage systemImageNamed:@"play.fill" withConfiguration:config] forState:UIControlStateNormal];
+        button.titleEdgeInsets = UIEdgeInsetsMake(0, 8, 0, 0);
+    }
+    else {
+        button.titleLabel.font = [UIFont systemFontOfSize:15 weight:UIFontWeightSemibold];
+        button.layer.borderWidth = 1;
+        button.layer.borderColor = [UIColor colorWithWhite:1 alpha:0.14].CGColor;
+        [button setTitleColor:PenumbraMutedTextColor() forState:UIControlStateNormal];
+    }
+
+    [button addTarget:self action:action forControlEvents:UIControlEventTouchUpInside];
+    return button;
+}
+
+- (void)resumeRunningAppTapped:(UIButton*)sender {
+    TemporaryApp* runningApp = [self findRunningApp:_selectedHost];
+    if (runningApp == nil) {
+        return;
+    }
+
+    [_appManager stopRetrieving];
+    if (currentPosition != FrontViewPositionLeft) {
+        // Settings must be saved before prepareToStreamApp, see appClicked
+        [[self revealViewController] revealToggleAnimated:NO];
+    }
+
+    [self prepareToStreamApp:runningApp];
+    [self performSegueWithIdentifier:@"createStreamFrame" sender:nil];
+}
+
+- (void)quitRunningAppTapped:(UIButton*)sender {
+    TemporaryApp* runningApp = [self findRunningApp:_selectedHost];
+    if (runningApp == nil) {
+        return;
+    }
+
+    UIAlertController* confirm = [UIAlertController alertControllerWithTitle:[NSString stringWithFormat:@"Quitter %@ ?", runningApp.name]
+                                                                     message:@"La progression non sauvegardée sera perdue."
+                                                              preferredStyle:UIAlertControllerStyleAlert];
+    [confirm addAction:[UIAlertAction actionWithTitle:@"Quitter" style:UIAlertActionStyleDestructive handler:^(UIAlertAction* action) {
+        [self quitRunningApp:runningApp thenStartApp:runningApp];
+    }]];
+    [confirm addAction:[UIAlertAction actionWithTitle:@"Annuler" style:UIAlertActionStyleCancel handler:nil]];
+    [[self activeViewController] presentViewController:confirm animated:YES completion:nil];
+}
+#endif
 
 - (void)didReceiveMemoryWarning
 {
