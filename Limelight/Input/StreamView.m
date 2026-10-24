@@ -362,21 +362,7 @@ static const double X1_MOUSE_SPEED_DIVISOR = 2.5;
                 keyInputField.delegate = self;
                 keyInputField.text = @"0";
 #if !TARGET_OS_TV
-                // Prepare the toolbar above the keyboard for more options
-                UIToolbar *customToolbarView = [[UIToolbar alloc] initWithFrame:CGRectMake(0, 0, self.bounds.size.width, 44)];
-                
-                UIBarButtonItem *doneBarButton = [self createButtonWithImageNamed:@"DoneIcon.png" backgroundColor:[UIColor clearColor] target:self action:@selector(toolbarButtonClicked:) keyCode:0x00 isToggleable:NO];
-                UIBarButtonItem *windowsBarButton = [self createButtonWithImageNamed:@"WindowsIcon.png" backgroundColor:[UIColor blackColor] target:self action:@selector(toolbarButtonClicked:) keyCode:0x5B isToggleable:YES];
-                UIBarButtonItem *tabBarButton = [self createButtonWithImageNamed:@"TabIcon.png" backgroundColor:[UIColor blackColor] target:self action:@selector(toolbarButtonClicked:) keyCode:0x09 isToggleable:NO];
-                UIBarButtonItem *shiftBarButton = [self createButtonWithImageNamed:@"ShiftIcon.png" backgroundColor:[UIColor blackColor] target:self action:@selector(toolbarButtonClicked:) keyCode:0xA0 isToggleable:YES];
-                UIBarButtonItem *escapeBarButton = [self createButtonWithImageNamed:@"EscapeIcon.png" backgroundColor:[UIColor blackColor] target:self action:@selector(toolbarButtonClicked:) keyCode:0x1B isToggleable:NO];
-                UIBarButtonItem *controlBarButton = [self createButtonWithImageNamed:@"ControlIcon.png" backgroundColor:[UIColor blackColor] target:self action:@selector(toolbarButtonClicked:) keyCode:0xA2 isToggleable:YES];
-                UIBarButtonItem *altBarButton = [self createButtonWithImageNamed:@"AltIcon.png" backgroundColor:[UIColor blackColor] target:self action:@selector(toolbarButtonClicked:) keyCode:0xA4 isToggleable:YES];
-                UIBarButtonItem *deleteBarButton = [self createButtonWithImageNamed:@"DeleteIcon.png" backgroundColor:[UIColor blackColor] target:self action:@selector(toolbarButtonClicked:) keyCode:0x2E isToggleable:NO];
-                UIBarButtonItem *flexibleSpace = [[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemFlexibleSpace target:nil action:nil];
-                
-                [customToolbarView setItems:[NSArray arrayWithObjects:doneBarButton, windowsBarButton, escapeBarButton, tabBarButton, shiftBarButton, controlBarButton, altBarButton, deleteBarButton, flexibleSpace, nil]];
-                keyInputField.inputAccessoryView = customToolbarView;
+                keyInputField.inputAccessoryView = [self createKeyboardAccessoryView];
 #endif
                 [keyInputField becomeFirstResponder];
                 [keyInputField addTarget:self action:@selector(onKeyboardPressed:) forControlEvents:UIControlEventEditingChanged];
@@ -390,22 +376,109 @@ static const double X1_MOUSE_SPEED_DIVISOR = 2.5;
     }
 }
 
-- (UIBarButtonItem *)createButtonWithImageNamed:(NSString *)imageName backgroundColor:(UIColor *)backgroundColor target:(id)target action:(SEL)action keyCode:(NSInteger)keyCode isToggleable:(BOOL)isToggleable {
-    UIImage *image = [UIImage imageNamed:imageName];
+#if !TARGET_OS_TV
+// Toolbar above the software keyboard: a fixed Done button, then a horizontally
+// scrolling row of special keys (too many to fit on an iPhone in one row)
+- (UIView *)createKeyboardAccessoryView {
+    UIInputView *accessoryView = [[UIInputView alloc] initWithFrame:CGRectMake(0, 0, self.bounds.size.width, 44) inputViewStyle:UIInputViewStyleKeyboard];
+
+    UIButton *doneButton = [self createKeyButtonWithImageNamed:@"DoneIcon.png" keyCode:0x00 isToggleable:NO];
+    doneButton.imageView.backgroundColor = [UIColor clearColor];
+    doneButton.frame = CGRectMake(8, 7, 30, 30);
+    [accessoryView addSubview:doneButton];
+
+    NSMutableArray<UIButton *> *keyButtons = [NSMutableArray arrayWithObjects:
+        [self createKeyButtonWithImageNamed:@"WindowsIcon.png" keyCode:0x5B isToggleable:YES],
+        [self createKeyButtonWithImageNamed:@"EscapeIcon.png" keyCode:0x1B isToggleable:NO],
+        [self createKeyButtonWithImageNamed:@"TabIcon.png" keyCode:0x09 isToggleable:NO],
+        [self createKeyButtonWithImageNamed:@"ShiftIcon.png" keyCode:0xA0 isToggleable:YES],
+        [self createKeyButtonWithImageNamed:@"ControlIcon.png" keyCode:0xA2 isToggleable:YES],
+        [self createKeyButtonWithImageNamed:@"AltIcon.png" keyCode:0xA4 isToggleable:YES],
+        [self createKeyButtonWithImageNamed:@"DeleteIcon.png" keyCode:0x2E isToggleable:NO],
+        [self createKeyButtonWithSymbolNamed:@"arrow.left" keyCode:0x25],
+        [self createKeyButtonWithSymbolNamed:@"arrow.up" keyCode:0x26],
+        [self createKeyButtonWithSymbolNamed:@"arrow.down" keyCode:0x28],
+        [self createKeyButtonWithSymbolNamed:@"arrow.right" keyCode:0x27],
+        [self createKeyButtonWithTitle:@"Home" keyCode:0x24],
+        [self createKeyButtonWithTitle:@"End" keyCode:0x23],
+        [self createKeyButtonWithTitle:@"PgUp" keyCode:0x21],
+        [self createKeyButtonWithTitle:@"PgDn" keyCode:0x22],
+        nil];
+    for (int i = 0; i < 12; i++) {
+        [keyButtons addObject:[self createKeyButtonWithTitle:[NSString stringWithFormat:@"F%d", i + 1] keyCode:0x70 + i]];
+    }
+
+    UIStackView *keyStack = [[UIStackView alloc] initWithArrangedSubviews:keyButtons];
+    keyStack.spacing = 8;
+    keyStack.alignment = UIStackViewAlignmentCenter;
+    keyStack.translatesAutoresizingMaskIntoConstraints = NO;
+
+    UIScrollView *keyScrollView = [[UIScrollView alloc] initWithFrame:CGRectMake(46, 0, accessoryView.bounds.size.width - 46, 44)];
+    keyScrollView.autoresizingMask = UIViewAutoresizingFlexibleWidth;
+    keyScrollView.showsHorizontalScrollIndicator = NO;
+    keyScrollView.contentInset = UIEdgeInsetsMake(0, 0, 0, 8);
+    [keyScrollView addSubview:keyStack];
+    [accessoryView addSubview:keyScrollView];
+
+    [NSLayoutConstraint activateConstraints:@[
+        [keyStack.leadingAnchor constraintEqualToAnchor:keyScrollView.contentLayoutGuide.leadingAnchor],
+        [keyStack.trailingAnchor constraintEqualToAnchor:keyScrollView.contentLayoutGuide.trailingAnchor],
+        [keyStack.topAnchor constraintEqualToAnchor:keyScrollView.contentLayoutGuide.topAnchor],
+        [keyStack.bottomAnchor constraintEqualToAnchor:keyScrollView.contentLayoutGuide.bottomAnchor],
+        [keyStack.heightAnchor constraintEqualToAnchor:keyScrollView.frameLayoutGuide.heightAnchor],
+    ]];
+
+    return accessoryView;
+}
+
+- (UIButton *)createKeyButtonWithKeyCode:(NSInteger)keyCode isToggleable:(BOOL)isToggleable {
     UIButton *button = [UIButton buttonWithType:UIButtonTypeCustom];
-    [button setImage:image forState:UIControlStateNormal];
-    button.frame = CGRectMake(0, 0, 30, 30);
-    button.imageView.contentMode = UIViewContentModeScaleAspectFit;
-    button.imageView.backgroundColor = backgroundColor;
-    button.imageView.layer.cornerRadius = 10.0;
-    button.imageEdgeInsets = UIEdgeInsetsMake(6, 6, 6, 6);
-    [button addTarget:target action:action forControlEvents:UIControlEventTouchUpInside];
+    [button addTarget:self action:@selector(toolbarButtonClicked:) forControlEvents:UIControlEventTouchUpInside];
     objc_setAssociatedObject(button, "keyCode", @(keyCode), OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     objc_setAssociatedObject(button, "isToggleable", @(isToggleable), OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     objc_setAssociatedObject(button, "isOn", @(NO), OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-    UIBarButtonItem *barButton = [[UIBarButtonItem alloc] initWithCustomView:button];
-    return barButton;
+    return button;
 }
+
+- (UIButton *)createKeyButtonWithImageNamed:(NSString *)imageName keyCode:(NSInteger)keyCode isToggleable:(BOOL)isToggleable {
+    UIButton *button = [self createKeyButtonWithKeyCode:keyCode isToggleable:isToggleable];
+    [button setImage:[UIImage imageNamed:imageName] forState:UIControlStateNormal];
+    [button.widthAnchor constraintEqualToConstant:30].active = YES;
+    [button.heightAnchor constraintEqualToConstant:30].active = YES;
+    button.imageView.contentMode = UIViewContentModeScaleAspectFit;
+    button.imageView.backgroundColor = [UIColor blackColor];
+    button.imageView.layer.cornerRadius = 10.0;
+    button.imageEdgeInsets = UIEdgeInsetsMake(6, 6, 6, 6);
+    return button;
+}
+
+// Text and symbol keys mimic the PNG key icons: a light grey keycap with dark glyphs
+- (UIButton *)createTextKeyButtonWithKeyCode:(NSInteger)keyCode {
+    UIButton *button = [self createKeyButtonWithKeyCode:keyCode isToggleable:NO];
+    button.backgroundColor = [UIColor colorWithWhite:0.72 alpha:1.0];
+    button.layer.cornerRadius = 4.0;
+    button.tintColor = [UIColor colorWithWhite:0.2 alpha:1.0];
+    [button setTitleColor:button.tintColor forState:UIControlStateNormal];
+    button.titleLabel.font = [UIFont systemFontOfSize:12 weight:UIFontWeightBold];
+    button.contentEdgeInsets = UIEdgeInsetsMake(0, 7, 0, 7);
+    [button.widthAnchor constraintGreaterThanOrEqualToConstant:24].active = YES;
+    [button.heightAnchor constraintEqualToConstant:24].active = YES;
+    return button;
+}
+
+- (UIButton *)createKeyButtonWithSymbolNamed:(NSString *)symbolName keyCode:(NSInteger)keyCode {
+    UIButton *button = [self createTextKeyButtonWithKeyCode:keyCode];
+    UIImageSymbolConfiguration *config = [UIImageSymbolConfiguration configurationWithPointSize:12 weight:UIImageSymbolWeightBold];
+    [button setImage:[UIImage systemImageNamed:symbolName withConfiguration:config] forState:UIControlStateNormal];
+    return button;
+}
+
+- (UIButton *)createKeyButtonWithTitle:(NSString *)title keyCode:(NSInteger)keyCode {
+    UIButton *button = [self createTextKeyButtonWithKeyCode:keyCode];
+    [button setTitle:title forState:UIControlStateNormal];
+    return button;
+}
+#endif
 
 - (void)toolbarButtonClicked:(UIButton *)sender {
     BOOL isToggleable = [objc_getAssociatedObject(sender, "isToggleable") boolValue];
@@ -788,34 +861,28 @@ static const double X1_MOUSE_SPEED_DIVISOR = 2.5;
 
 - (void)onKeyboardPressed:(UITextField *)textField {
     NSString* inputText = textField.text;
+    // Ctrl, Alt or Win held from the toolbar means a shortcut (e.g. Ctrl+C), which needs real key events
+    BOOL shortcutModifierHeld = [keysDown containsObject:@(0xA2)] || [keysDown containsObject:@(0xA4)] || [keysDown containsObject:@(0x5B)];
     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_HIGH, 0), ^{
         // If the text became empty, we know the user pressed the backspace key.
         if ([inputText isEqual:@""]) {
             LiSendKeyboardEvent(0x08, KEY_ACTION_DOWN, 0);
             usleep(50 * 1000);
             LiSendKeyboardEvent(0x08, KEY_ACTION_UP, 0);
-        } else {
+        } else if (shortcutModifierHeld) {
             // Character 0 will be our known sentinel value
-            
-            // Check if any characters exist which can't be represented in a basic key event
             for (int i = 1; i < [inputText length]; i++) {
                 struct KeyEvent event = [KeyboardSupport translateKeyEvent:[inputText characterAtIndex:i] withModifierFlags:0];
-                if (event.keycode == 0) {
-                    // We found an unknown key, so send the entire string as UTF-8
-                    const char* utf8String = [inputText UTF8String];
-                    
-                    // Skip the first character which is our sentinel
-                    LiSendUtf8TextEvent(utf8String + 1, (int)strlen(utf8String) - 1);
-                    return;
+                if (event.keycode != 0) {
+                    [self sendLowLevelEvent:event];
                 }
             }
-            
-            // We didn't find any unknown characters, so send them all as basic key events
-            for (int i = 1; i < [inputText length]; i++) {
-                struct KeyEvent event = [KeyboardSupport translateKeyEvent:[inputText characterAtIndex:i] withModifierFlags:0];
-                assert(event.keycode != 0);
-                [self sendLowLevelEvent:event];
-            }
+        } else if ([inputText length] > 1) {
+            // Send plain text as UTF-8 so the host types the exact characters whatever its
+            // keyboard layout is. Key events assume a US layout and break digits on AZERTY.
+            // Skip the first character which is our sentinel.
+            const char* utf8String = [[inputText substringFromIndex:1] UTF8String];
+            LiSendUtf8TextEvent(utf8String, (int)strlen(utf8String));
         }
     });
     
