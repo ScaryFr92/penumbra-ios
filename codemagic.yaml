@@ -2,8 +2,8 @@
 #
 # Before the first build, in Codemagic:
 #   1. Settings > Integrations > Developer Portal: an App Store Connect API key
-#      and name it "Penumbra" (or change "app_store_connect: Trotti" below).
-#   2. In App Store Connect, create the app with bundle ID com.scaryfr92.penumbra
+#      named "Trotti" (a key works for every app of the Apple account).
+#   2. App Store Connect has the app with bundle ID com.scaryfr92.penumbra
 #      (only needed for the TestFlight workflow).
 #
 # ios-testflight: uploads to TestFlight, install it with the TestFlight app.
