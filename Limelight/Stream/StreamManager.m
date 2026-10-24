@@ -79,6 +79,7 @@
     // Populate the config's version fields from serverinfo
     _config.appVersion = appversion;
     _config.gfeVersion = gfeVersion;
+    _config.hostMetricsSupported = [[serverInfoResp getStringTag:@"HardwareMetricsVersion"] intValue] == 1;
     
     // resumeApp and launchApp handle calling launchFailed
     NSString* sessionUrl;

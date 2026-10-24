@@ -38,6 +38,27 @@
 
 #include <Limelight.h>
 
+#if !TARGET_OS_TV
+// Session controls a Sunshine-compatible host can list as apps (Remote Monitor,
+// Remote Input...), with the symbol and label we show for them. nil for games.
+static NSArray<NSString*>* sessionControlInfo(TemporaryApp* app) {
+    static NSDictionary<NSString*, NSArray<NSString*>*>* controls;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        controls = @{
+            @"remote monitor": @[@"display.2", @"Écran en plus"],
+            @"remote input": @[@"hand.point.up.left", @"Contrôle sans vidéo"],
+            @"disconnect monitor": @[@"display", @"Retirer l'écran"],
+            @"disconnect input": @[@"eject", @"Arrêter le contrôle"],
+            @"resume": @[@"play.fill", @"Reprendre la session"],
+            @"terminate": @[@"xmark.circle", @"Fermer le jeu"],
+        };
+    });
+    // Hosts pad these names with spaces to sort them first
+    return controls[[[app.name stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]] lowercaseString]];
+}
+#endif
+
 @implementation MainFrameViewController {
     NSOperationQueue* _opQueue;
     TemporaryHost* _selectedHost;
@@ -52,6 +73,7 @@
     UIScrollView* hostScrollView;
     FrontViewPosition currentPosition;
     NSArray* _sortedAppList;
+    NSArray* _sessionControls;
     NSCache* _boxArtCache;
     bool _background;
 #if TARGET_OS_TV
@@ -558,6 +580,12 @@ static NSMutableSet* hostList;
             self->_showHiddenApps = YES;
             [self hostClicked:host view:view];
         }]];
+
+        if (host.canSleep) {
+            [longClickAlert addAction:[UIAlertAction actionWithTitle:@"Mettre en veille" style:UIAlertActionStyleDefault handler:^(UIAlertAction* action){
+                [self confirmSleepHost:host];
+            }]];
+        }
         
 #if !TARGET_OS_TV
         if (host.isNvidiaServerSoftware) {
@@ -623,6 +651,80 @@ static NSMutableSet* hostList;
     
     longClickAlert.popoverPresentationController.sourceRect = CGRectMake(view.bounds.size.width / 2.0, view.bounds.size.height / 2.0, 1.0, 1.0); // center of the view
     [[self activeViewController] presentViewController:longClickAlert animated:YES completion:nil];
+}
+
+- (void) confirmSleepHost:(TemporaryHost *)host {
+    UIAlertController* confirm = [UIAlertController alertControllerWithTitle:[NSString stringWithFormat:@"Mettre %@ en veille ?", host.name]
+                                                                     message:@"Tu pourras le réveiller depuis Penumbra avec « Wake PC »."
+                                                              preferredStyle:UIAlertControllerStyleAlert];
+    [confirm addAction:[UIAlertAction actionWithTitle:@"Mettre en veille" style:UIAlertActionStyleDefault handler:^(UIAlertAction* action) {
+        [self sleepHost:host];
+    }]];
+    [confirm addAction:[UIAlertAction actionWithTitle:@"Annuler" style:UIAlertActionStyleCancel handler:nil]];
+    [[self activeViewController] presentViewController:confirm animated:YES completion:nil];
+}
+
+// Paired-client sleep: fetch a one-time token, then post it. Never retried
+// automatically, a new attempt needs a new confirmation and a new token.
+- (void) sleepHost:(TemporaryHost *)host {
+    [self showLoadingFrame:^{
+        dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+            HttpManager* hMan = [[HttpManager alloc] initWithHost:host];
+
+            HttpResponse* capabilities = [[HttpResponse alloc] init];
+            [hMan executeRequestSynchronously:[HttpRequest requestForResponse:capabilities withUrlRequest:[hMan newPowerActionsRequest]]];
+            NSString* token = [[capabilities getStringTag:@"SleepToken"] trim];
+
+            NSString* title;
+            NSString* message;
+            if (![capabilities isStatusOk] || token.length == 0) {
+                title = @"Mise en veille impossible";
+                message = capabilities.statusCode == 403 ? @"Cet appareil n'est plus autorisé à mettre le PC en veille."
+                                                         : @"Le PC n'a pas répondu à la demande.";
+            }
+            else if ([[[capabilities getStringTag:@"SleepAvailable"] trim] intValue] != 1) {
+                title = @"Mise en veille impossible";
+                message = @"Le PC est occupé. Ferme d'abord le jeu ou la session en cours (y compris Remote Monitor et Remote Input).";
+            }
+            else {
+                HttpResponse* sleepResp = [[HttpResponse alloc] init];
+                [hMan executeRequestSynchronously:[HttpRequest requestForResponse:sleepResp withUrlRequest:[hMan newSleepRequestWithToken:token]]];
+
+                switch (sleepResp.statusCode) {
+                    case 202:
+                        title = @"Mise en veille demandée";
+                        message = [NSString stringWithFormat:@"%@ va se mettre en veille.", host.name];
+                        break;
+                    case 409:
+                        title = @"Mise en veille impossible";
+                        message = @"Le PC est occupé. Ferme d'abord le jeu ou la session en cours.";
+                        break;
+                    case 401:
+                    case 403:
+                        title = @"Mise en veille impossible";
+                        message = @"Cet appareil n'est pas autorisé à mettre le PC en veille.";
+                        break;
+                    case 501:
+                        title = @"Mise en veille impossible";
+                        message = @"Ce PC ne prend pas en charge la mise en veille.";
+                        break;
+                    default:
+                        // The request may have reached the PC before the answer got lost
+                        title = @"Résultat inconnu";
+                        message = @"Le PC a peut-être reçu la demande. Vérifie son état avant de réessayer.";
+                        break;
+                }
+            }
+
+            dispatch_async(dispatch_get_main_queue(), ^{
+                [self hideLoadingFrame:^{
+                    UIAlertController* result = [UIAlertController alertControllerWithTitle:title message:message preferredStyle:UIAlertControllerStyleAlert];
+                    [result addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
+                    [[self activeViewController] presentViewController:result animated:YES completion:nil];
+                }];
+            });
+        });
+    }];
 }
 
 - (void) addHostClicked {
@@ -1413,7 +1515,18 @@ static NSMutableSet* hostList;
         }
         _sortedAppList = visibleAppList;
     }
-    
+
+#if !TARGET_OS_TV
+    // Session controls get their own row above the games
+    NSMutableArray* games = [NSMutableArray array];
+    NSMutableArray* sessionControls = [NSMutableArray array];
+    for (TemporaryApp* app in _sortedAppList) {
+        [(sessionControlInfo(app) != nil ? sessionControls : games) addObject:app];
+    }
+    _sortedAppList = games;
+    _sessionControls = sessionControls;
+#endif
+
     [hostScrollView removeFromSuperview];
     [self.collectionView reloadData];
 }
@@ -1466,15 +1579,28 @@ static NSMutableSet* hostList;
 }
 
 #if !TARGET_OS_TV
-- (CGSize)collectionView:(UICollectionView *)collectionView layout:(UICollectionViewLayout *)collectionViewLayout referenceSizeForHeaderInSection:(NSInteger)section {
-    BOOL showBanner = _selectedHost != nil && _sortedAppList != nil && [self findRunningApp:_selectedHost] != nil;
-    return CGSizeMake(collectionView.bounds.size.width, showBanner ? 100 : 0);
+- (BOOL)showsRunningAppBanner {
+    return _selectedHost != nil && _sortedAppList != nil && [self findRunningApp:_selectedHost] != nil;
 }
 
-// A card for the game running on the PC, with Resume and Quit buttons
+- (BOOL)showsSessionControls {
+    return _selectedHost != nil && _sortedAppList != nil && _sessionControls.count > 0;
+}
+
+- (CGSize)collectionView:(UICollectionView *)collectionView layout:(UICollectionViewLayout *)collectionViewLayout referenceSizeForHeaderInSection:(NSInteger)section {
+    CGFloat height = ([self showsRunningAppBanner] ? 100 : 0) + ([self showsSessionControls] ? 64 : 0);
+    return CGSizeMake(collectionView.bounds.size.width, height);
+}
+
+// Above the games: a card for the game running on the PC, with Resume and Quit
+// buttons, then a row of the host's session controls (Remote Monitor...)
 - (UICollectionReusableView *)collectionView:(UICollectionView *)collectionView viewForSupplementaryElementOfKind:(NSString *)kind atIndexPath:(NSIndexPath *)indexPath {
     UICollectionReusableView* header = [collectionView dequeueReusableSupplementaryViewOfKind:kind withReuseIdentifier:@"RunningAppHeader" forIndexPath:indexPath];
     [header.subviews makeObjectsPerformSelector:@selector(removeFromSuperview)];
+
+    if ([self showsSessionControls]) {
+        [self addSessionControlsToHeader:header top:[self showsRunningAppBanner] ? 116 : 16];
+    }
 
     TemporaryApp* runningApp = [self findRunningApp:_selectedHost];
     if (runningApp == nil) {
@@ -1519,6 +1645,56 @@ static NSMutableSet* hostList;
     [banner addSubview:name];
 
     return header;
+}
+
+- (void)addSessionControlsToHeader:(UICollectionReusableView*)header top:(CGFloat)top {
+    UIScrollView* row = [[UIScrollView alloc] initWithFrame:CGRectMake(0, top, header.bounds.size.width, 44)];
+    row.autoresizingMask = UIViewAutoresizingFlexibleWidth;
+    row.showsHorizontalScrollIndicator = NO;
+    [header addSubview:row];
+
+    CGFloat x = 28;
+    for (NSUInteger i = 0; i < _sessionControls.count; i++) {
+        NSArray<NSString*>* info = sessionControlInfo(_sessionControls[i]);
+
+        UIButton* button = [UIButton buttonWithType:UIButtonTypeSystem];
+        button.tag = i;
+        button.backgroundColor = PenumbraSurfaceColor();
+        button.layer.cornerRadius = 22;
+        button.layer.borderWidth = 1;
+        button.layer.borderColor = PenumbraHairlineColor().CGColor;
+        button.tintColor = PenumbraAccentColor();
+        button.titleLabel.font = [UIFont systemFontOfSize:15 weight:UIFontWeightSemibold];
+        [button setTitle:info[1] forState:UIControlStateNormal];
+        [button setTitleColor:PenumbraTextColor() forState:UIControlStateNormal];
+        [button setImage:[UIImage systemImageNamed:info[0]] forState:UIControlStateNormal];
+        button.contentEdgeInsets = UIEdgeInsetsMake(0, 16, 0, 22);
+        button.titleEdgeInsets = UIEdgeInsetsMake(0, 8, 0, -8);
+        [button addTarget:self action:@selector(sessionControlTapped:) forControlEvents:UIControlEventTouchUpInside];
+
+        CGFloat width = [button sizeThatFits:CGSizeMake(CGFLOAT_MAX, 44)].width;
+        button.frame = CGRectMake(x, 0, width, 44);
+        [row addSubview:button];
+        x += width + 10;
+    }
+    row.contentSize = CGSizeMake(x + 18, 44);
+}
+
+// Session controls start right away like any app, the host decides what they do
+- (void)sessionControlTapped:(UIButton*)sender {
+    if ((NSUInteger)sender.tag >= _sessionControls.count) {
+        return;
+    }
+    TemporaryApp* control = _sessionControls[sender.tag];
+
+    [_appManager stopRetrieving];
+    if (currentPosition != FrontViewPositionLeft) {
+        // Settings must be saved before prepareToStreamApp, see appClicked
+        [[self revealViewController] revealToggleAnimated:NO];
+    }
+
+    [self prepareToStreamApp:control];
+    [self performSegueWithIdentifier:@"createStreamFrame" sender:nil];
 }
 
 - (UIButton*)bannerButtonWithTitle:(NSString*)title filled:(BOOL)filled action:(SEL)action {

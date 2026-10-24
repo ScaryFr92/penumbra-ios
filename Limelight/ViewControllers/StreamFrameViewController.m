@@ -10,6 +10,7 @@
 #import "MainFrameViewController.h"
 #import "VideoDecoderRenderer.h"
 #import "StreamManager.h"
+#import "HttpManager.h"
 #import "ControllerSupport.h"
 #import "DataManager.h"
 #import "../PenumbraSettings.h"
@@ -111,6 +112,12 @@ static NSArray<NSNumber*>* parseKeyCombo(NSString* text) {
     UIScrollView *_scrollView;
     BOOL _userIsInteracting;
     CGSize _keyboardSize;
+
+    NSString *_hostMetricsText;
+    BOOL _hostMetricsInFlight;
+    BOOL _hostMetricsStopped;
+    int _hostMetricsFailures;
+    CFTimeInterval _hostMetricsNextPoll;
     
 #if !TARGET_OS_TV
     UIScreenEdgePanGestureRecognizer *_exitSwipeRecognizer;
@@ -358,9 +365,80 @@ static NSArray<NSNumber*>* parseKeyCombo(NSString* text) {
 
 - (void)updateStatsOverlay {
     NSString* overlayText = [self->_streamMan getStatsOverlayText];
-    
+
     dispatch_async(dispatch_get_main_queue(), ^{
-        [self updateOverlayText:overlayText];
+        [self pollHostMetrics];
+        if (overlayText != nil && self->_hostMetricsText != nil) {
+            [self updateOverlayText:[NSString stringWithFormat:@"%@\n%@", overlayText, self->_hostMetricsText]];
+        }
+        else {
+            [self updateOverlayText:overlayText];
+        }
+    });
+}
+
+static NSNumber* metricNumber(id object, NSString* key) {
+    id value = [object isKindOfClass:[NSDictionary class]] ? object[key] : nil;
+    return [value isKindOfClass:[NSNumber class]] ? value : nil;
+}
+
+// Hardware metrics v1: the host's CPU and GPU load, only when the host advertises it.
+// One request at a time, no faster than the host's interval, backing off on errors.
+- (void)pollHostMetrics {
+    if (!self.streamConfig.hostMetricsSupported || _hostMetricsStopped || _hostMetricsInFlight || CACurrentMediaTime() < _hostMetricsNextPoll) {
+        return;
+    }
+
+    _hostMetricsInFlight = YES;
+    StreamConfiguration* config = self.streamConfig;
+    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_LOW, 0), ^{
+        HttpManager* hMan = [[HttpManager alloc] initWithAddress:config.host httpsPort:config.httpsPort serverCert:config.serverCert];
+        HttpResponse* response = [[HttpResponse alloc] init];
+        [hMan executeRequestSynchronously:[HttpRequest requestForResponse:response withUrlRequest:[hMan newHardwareMetricsRequest]]];
+        id json = response.data != nil ? [NSJSONSerialization JSONObjectWithData:response.data options:0 error:nil] : nil;
+
+        dispatch_async(dispatch_get_main_queue(), ^{
+            self->_hostMetricsInFlight = NO;
+
+            if (![json isKindOfClass:[NSDictionary class]] || json[@"error"] != nil) {
+                // Back off, and give up if the host keeps refusing (metrics off, no video yet...)
+                self->_hostMetricsText = nil;
+                self->_hostMetricsNextPoll = CACurrentMediaTime() + 5;
+                self->_hostMetricsStopped = ++self->_hostMetricsFailures >= 3;
+                return;
+            }
+
+            self->_hostMetricsFailures = 0;
+            self->_hostMetricsNextPoll = CACurrentMediaTime() + MAX([metricNumber(json, @"interval_ms") doubleValue], 1000) / 1000;
+
+            NSMutableArray<NSString*>* parts = [NSMutableArray array];
+            NSNumber* cpu = metricNumber(json[@"cpu"], @"cpu_usage_percent");
+            if (cpu != nil) {
+                [parts addObject:[NSString stringWithFormat:@"CPU %.0f%%", cpu.doubleValue]];
+            }
+
+            id gpus = json[@"gpus"];
+            id gpu = [gpus isKindOfClass:[NSArray class]] ? [gpus firstObject] : nil;
+            id gpuMetrics = [gpu isKindOfClass:[NSDictionary class]] ? gpu[@"metrics"] : nil;
+            NSNumber* gpuUsage = metricNumber(gpuMetrics, @"gpu_usage_percent");
+            NSNumber* encoderUsage = metricNumber(gpuMetrics, @"gpu_encoder_percent");
+            NSNumber* temperature = metricNumber(gpuMetrics, @"gpu_temperature_c");
+            NSNumber* vramUsed = metricNumber(gpuMetrics, @"gpu_vram_used_mb");
+            if (gpuUsage != nil) {
+                [parts addObject:[NSString stringWithFormat:@"GPU %.0f%%", gpuUsage.doubleValue]];
+            }
+            if (encoderUsage != nil) {
+                [parts addObject:[NSString stringWithFormat:@"Encodeur %.0f%%", encoderUsage.doubleValue]];
+            }
+            if (temperature != nil) {
+                [parts addObject:[NSString stringWithFormat:@"%.0f °C", temperature.doubleValue]];
+            }
+            if (vramUsed != nil) {
+                [parts addObject:[NSString stringWithFormat:@"VRAM %.1f Go", vramUsed.doubleValue / 1024]];
+            }
+
+            self->_hostMetricsText = parts.count > 0 ? [@"PC : " stringByAppendingString:[parts componentsJoinedByString:@" · "]] : nil;
+        });
     });
 }
 

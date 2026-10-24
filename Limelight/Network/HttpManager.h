@@ -29,6 +29,9 @@
 - (NSURLRequest*) newLaunchOrResumeRequest:(NSString*)verb config:(StreamConfiguration*)config;
 - (NSURLRequest*) newQuitAppRequest;
 - (NSURLRequest*) newAppAssetRequestWithAppId:(NSString*)appId;
+- (NSURLRequest*) newPowerActionsRequest;
+- (NSURLRequest*) newSleepRequestWithToken:(NSString*)token;
+- (NSURLRequest*) newHardwareMetricsRequest;
 - (void) executeRequestSynchronously:(HttpRequest*)request;
 
 @end

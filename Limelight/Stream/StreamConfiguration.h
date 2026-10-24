@@ -32,4 +32,7 @@
 @property BOOL useFramePacing;
 @property NSData* serverCert;
 
+// The host advertised hardware metrics v1 (CPU/GPU load during the stream)
+@property BOOL hostMetricsSupported;
+
 @end

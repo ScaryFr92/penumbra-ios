@@ -65,7 +65,8 @@ static const CGFloat TITLE_FONT_SIZE = 18;
     [self addSubview:_appImage];
 
     _titleLabel = [[UILabel alloc] initWithFrame:CGRectMake(2, COVER_HEIGHT + 8, COVER_WIDTH - 4, TITLE_HEIGHT - 8)];
-    _titleLabel.text = app.name;
+    // Some hosts pad session control names with spaces to sort them first
+    _titleLabel.text = [app.name stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
     _titleLabel.font = [UIFont systemFontOfSize:TITLE_FONT_SIZE weight:UIFontWeightSemibold];
     _titleLabel.textColor = PenumbraTextColor();
     _titleLabel.lineBreakMode = NSLineBreakByTruncatingTail;
@@ -184,7 +185,7 @@ static const CGFloat TITLE_FONT_SIZE = 18;
     if (noAppImage) {
         // The game's name sits at the bottom of its tile
         _appLabel = [[UILabel alloc] initWithFrame:CGRectMake(padding, padding, COVER_WIDTH - 2 * padding, COVER_HEIGHT - 2 * padding)];
-        _appLabel.text = _app.name;
+        _appLabel.text = _titleLabel.text;
         _appLabel.textColor = [UIColor colorWithWhite:1 alpha:0.9];
         _appLabel.font = [UIFont systemFontOfSize:TITLE_FONT_SIZE + 2 weight:UIFontWeightHeavy];
         _appLabel.numberOfLines = 0;

@@ -26,6 +26,9 @@
 @property (atomic, nullable, retain) NSString *mac;
 @property (atomic)                   int serverCodecModeSupport;
 
+// The host advertised paired-client sleep and allows this device to use it
+@property (atomic)                   BOOL canSleep;
+
 NS_ASSUME_NONNULL_BEGIN
 
 @property (atomic, retain) NSString *name;

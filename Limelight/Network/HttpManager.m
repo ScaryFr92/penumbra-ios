@@ -304,6 +304,40 @@
     return [self createRequestFromString:urlString timeout:NORMAL_TIMEOUT_SEC];
 }
 
+// Paired-client power actions v1 (a Sunshine-compatible host extension). The host
+// identifies us by our client certificate, so these carry no uniqueid.
+- (NSURLRequest*) newPowerActionsRequest {
+    if (![self ensureHttpsUrlPopulated:NO]) {
+        return nil;
+    }
+
+    NSString* urlString = [NSString stringWithFormat:@"%@/power-actions/v1", _baseHTTPSURL];
+    return [self createRequestFromString:urlString timeout:NORMAL_TIMEOUT_SEC];
+}
+
+// The token must be the only query argument and the body must be empty
+- (NSURLRequest*) newSleepRequestWithToken:(NSString*)token {
+    if (![self ensureHttpsUrlPopulated:NO]) {
+        return nil;
+    }
+
+    NSString* encodedToken = [token stringByAddingPercentEncodingWithAllowedCharacters:[NSCharacterSet alphanumericCharacterSet]];
+    NSString* urlString = [NSString stringWithFormat:@"%@/power-actions/v1/sleep?token=%@", _baseHTTPSURL, encodedToken];
+    NSMutableURLRequest* request = (NSMutableURLRequest*)[self createRequestFromString:urlString timeout:NORMAL_TIMEOUT_SEC];
+    request.HTTPMethod = @"POST";
+    return request;
+}
+
+// Hardware metrics v1 (a Sunshine-compatible host extension), answered in JSON
+- (NSURLRequest*) newHardwareMetricsRequest {
+    if (![self ensureHttpsUrlPopulated:NO]) {
+        return nil;
+    }
+
+    NSString* urlString = [NSString stringWithFormat:@"%@/api/hardware-metrics", _baseHTTPSURL];
+    return [self createRequestFromString:urlString timeout:NORMAL_TIMEOUT_SEC];
+}
+
 - (NSString*) bytesToHex:(NSData*)data {
     const unsigned char* bytes = [data bytes];
     NSMutableString *hex = [[NSMutableString alloc] init];

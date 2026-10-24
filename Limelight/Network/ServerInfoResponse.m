@@ -99,6 +99,11 @@
     if (serverCodecModeString != nil) {
         host.serverCodecModeSupport = [[serverCodecModeString trim] intValue];
     }
+
+    // Host extension: paired-client sleep, only offered when advertised, supported and allowed
+    host.canSleep = [[[self getStringTag:@"PowerActionVersion"] trim] intValue] == 1 &&
+                    [[[self getStringTag:@"SleepSupported"] trim] intValue] == 1 &&
+                    [[[self getStringTag:@"SleepAllowed"] trim] intValue] == 1;
 }
 
 @end
