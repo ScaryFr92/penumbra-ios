@@ -74,6 +74,7 @@ static NSArray<NSString*>* sessionControlInfo(TemporaryApp* app) {
     FrontViewPosition currentPosition;
     NSArray* _sortedAppList;
     NSArray* _sessionControls;
+    UIBarButtonItem* _backButtonItem;
     NSCache* _boxArtCache;
     bool _background;
 #if TARGET_OS_TV
@@ -139,17 +140,19 @@ static NSMutableSet* hostList;
     });
 }
 
+// The back button is removed rather than emptied: iOS still draws the
+// glass bubble of an empty bar button
 - (void)disableUpButton {
 #if !TARGET_OS_TV
-    [self->_upButton setImage:nil];
-    [self->_upButton setTitle:nil];
+    self.navigationItem.leftBarButtonItem = nil;
 #endif
 }
 
 - (void)enableUpButton {
 #if !TARGET_OS_TV
-    [self->_upButton setImage:[UIImage systemImageNamed:@"chevron.left"]];
-    self->_upButton.accessibilityLabel = @"Retour aux PC";
+    [_backButtonItem setImage:[UIImage systemImageNamed:@"chevron.left"]];
+    _backButtonItem.accessibilityLabel = @"Retour aux PC";
+    self.navigationItem.leftBarButtonItem = _backButtonItem;
 #endif
 }
 
@@ -190,7 +193,9 @@ static NSMutableSet* hostList;
     [_settingsButton setTitle:nil];
     [_settingsButton setImage:[UIImage systemImageNamed:@"gearshape"]];
     _settingsButton.accessibilityLabel = @"Réglages";
-    self.navigationItem.leftBarButtonItem = _upButton;
+    // Keep our own reference, the outlet is weak and the item comes and goes
+    _backButtonItem = _upButton;
+    self.navigationItem.leftBarButtonItem = _selectedHost != nil ? _backButtonItem : nil;
     self.navigationItem.rightBarButtonItem = _settingsButton;
 
     [self.collectionView registerClass:[UICollectionReusableView class]

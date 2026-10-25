@@ -9,6 +9,7 @@
 #import "AppDelegate.h"
 #if !TARGET_OS_TV
 #import "StreamFrameViewController.h"
+#import "PenumbraSettings.h"
 #endif
 
 @implementation AppDelegate
@@ -36,9 +37,13 @@ static NSString* DB_NAME = @"Limelight_iOS.sqlite";
 }
 
 #if !TARGET_OS_TV
-// The app UI is landscape only, but a stream can also be held in portrait
+// The app is landscape only, like before. A stream can also turn to portrait
+// when the user enabled it in the settings.
 - (UIInterfaceOrientationMask)application:(UIApplication *)application supportedInterfaceOrientationsForWindow:(UIWindow *)window {
-    return [StreamFrameViewController isStreamActive] ? UIInterfaceOrientationMaskAllButUpsideDown : UIInterfaceOrientationMaskLandscape;
+    if ([StreamFrameViewController isStreamActive] && PenumbraPortraitStreamEnabled()) {
+        return UIInterfaceOrientationMaskAllButUpsideDown;
+    }
+    return UIInterfaceOrientationMaskLandscape;
 }
 
 - (void)application:(UIApplication *)application performActionForShortcutItem:(UIApplicationShortcutItem *)shortcutItem completionHandler:(void (^)(BOOL succeeded))completionHandler {

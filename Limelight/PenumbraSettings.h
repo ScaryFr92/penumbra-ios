@@ -14,6 +14,7 @@ static NSString* const PenumbraDeviceMotionKey = @"penumbra.deviceMotion";
 static NSString* const PenumbraNativeTouchKey = @"penumbra.nativeTouch";
 static NSString* const PenumbraInertialScrollKey = @"penumbra.inertialScroll";
 static NSString* const PenumbraCustomShortcutsKey = @"penumbra.customShortcuts";
+static NSString* const PenumbraPortraitStreamKey = @"penumbra.portraitStream";
 
 static inline void PenumbraRegisterDefaults(void) {
     [[NSUserDefaults standardUserDefaults] registerDefaults:@{
@@ -23,6 +24,7 @@ static inline void PenumbraRegisterDefaults(void) {
         PenumbraNativeTouchKey: @NO,
         PenumbraInertialScrollKey: @YES,
         PenumbraCustomShortcutsKey: @[],
+        PenumbraPortraitStreamKey: @NO,
     }];
 }
 
@@ -49,6 +51,12 @@ static inline BOOL PenumbraNativeTouchEnabled(void) {
 static inline BOOL PenumbraInertialScrollEnabled(void) {
     PenumbraRegisterDefaults();
     return [[NSUserDefaults standardUserDefaults] boolForKey:PenumbraInertialScrollKey];
+}
+
+// Off by default: streams stay landscape like before, even with the rotation lock on
+static inline BOOL PenumbraPortraitStreamEnabled(void) {
+    PenumbraRegisterDefaults();
+    return [[NSUserDefaults standardUserDefaults] boolForKey:PenumbraPortraitStreamKey];
 }
 
 static inline NSArray<NSString*>* PenumbraCustomShortcuts(void) {

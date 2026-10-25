@@ -297,8 +297,11 @@ BOOL isCustomResolution(CGSize res) {
     bottom = [self addSettingWithTitle:@"Device Motion as Gyro" segments:@[@"Off", @"On"]
                                 values:@[@NO, @YES] key:PenumbraDeviceMotionKey
                                  below:bottom templateLabel:templateLabel];
-    [self addSettingWithTitle:@"On-Screen Controls Opacity" segments:@[@"25%", @"50%", @"75%", @"100%"]
-                       values:@[@0.25f, @0.5f, @0.75f, @1.0f] key:PenumbraOscOpacityKey
+    bottom = [self addSettingWithTitle:@"On-Screen Controls Opacity" segments:@[@"25%", @"50%", @"75%", @"100%"]
+                                values:@[@0.25f, @0.5f, @0.75f, @1.0f] key:PenumbraOscOpacityKey
+                                 below:bottom templateLabel:templateLabel];
+    [self addSettingWithTitle:@"Portrait While Streaming" segments:@[@"Off", @"On"]
+                       values:@[@NO, @YES] key:PenumbraPortraitStreamKey
                         below:bottom templateLabel:templateLabel];
 }
 
