@@ -252,7 +252,7 @@ static NSArray<NSNumber*>* parseKeyCombo(NSString* text) {
 #if TARGET_OS_TV
     [_tipLabel setText:@"Tip: Tap the Play/Pause button on the Apple TV Remote to disconnect from your PC"];
 #else
-    [_tipLabel setText:@"Tip: Swipe from the left edge to open the menu"];
+    [_tipLabel setText:@"Astuce : glisse depuis le bord gauche pour ouvrir le menu"];
 #endif
     
     [_tipLabel sizeToFit];
@@ -571,55 +571,56 @@ static NSNumber* metricNumber(id object, NSString* key) {
 }
 
 - (void)showStreamMenu {
-    UIAlertController* menu = [UIAlertController alertControllerWithTitle:nil message:nil preferredStyle:UIAlertControllerStyleActionSheet];
+    // Title the menu with the game being streamed, so it is clear what Disconnect leaves
+    UIAlertController* menu = [UIAlertController alertControllerWithTitle:self.streamConfig.appName message:nil preferredStyle:UIAlertControllerStyleActionSheet];
 
-    [menu addAction:[UIAlertAction actionWithTitle:@"Keyboard" style:UIAlertActionStyleDefault handler:^(UIAlertAction* action) {
+    [menu addAction:[UIAlertAction actionWithTitle:@"Clavier" style:UIAlertActionStyleDefault handler:^(UIAlertAction* action) {
         [self->_streamView toggleKeyboard];
     }]];
-    [menu addAction:[UIAlertAction actionWithTitle:@"Paste Clipboard Text" style:UIAlertActionStyleDefault handler:^(UIAlertAction* action) {
+    [menu addAction:[UIAlertAction actionWithTitle:@"Coller le presse-papiers" style:UIAlertActionStyleDefault handler:^(UIAlertAction* action) {
         NSString* text = [UIPasteboard generalPasteboard].string;
         if (text.length > 0) {
             const char* utf8String = [text UTF8String];
             LiSendUtf8TextEvent(utf8String, (unsigned int)strlen(utf8String));
         }
     }]];
-    [menu addAction:[UIAlertAction actionWithTitle:@"Keyboard Shortcuts…" style:UIAlertActionStyleDefault handler:^(UIAlertAction* action) {
+    [menu addAction:[UIAlertAction actionWithTitle:@"Raccourcis clavier…" style:UIAlertActionStyleDefault handler:^(UIAlertAction* action) {
         [self showShortcutsMenu];
     }]];
-    [menu addAction:[UIAlertAction actionWithTitle:@"Switch Display…" style:UIAlertActionStyleDefault handler:^(UIAlertAction* action) {
+    [menu addAction:[UIAlertAction actionWithTitle:@"Changer d'écran…" style:UIAlertActionStyleDefault handler:^(UIAlertAction* action) {
         [self showDisplayMenu];
     }]];
-    [menu addAction:[UIAlertAction actionWithTitle:@"Disconnect" style:UIAlertActionStyleDestructive handler:^(UIAlertAction* action) {
+    [menu addAction:[UIAlertAction actionWithTitle:@"Se déconnecter" style:UIAlertActionStyleDestructive handler:^(UIAlertAction* action) {
         [self returnToMainFrame];
     }]];
-    [menu addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:nil]];
+    [menu addAction:[UIAlertAction actionWithTitle:@"Annuler" style:UIAlertActionStyleCancel handler:nil]];
 
     [self presentMenu:menu];
 }
 
 - (void)showDisplayMenu {
     // Sunshine switches the streamed monitor on Ctrl+Alt+Shift+F1..F12
-    UIAlertController* menu = [UIAlertController alertControllerWithTitle:@"Switch Display" message:@"Requires a Sunshine host" preferredStyle:UIAlertControllerStyleActionSheet];
+    UIAlertController* menu = [UIAlertController alertControllerWithTitle:@"Changer d'écran" message:@"Nécessite un hôte Sunshine" preferredStyle:UIAlertControllerStyleActionSheet];
     for (int i = 0; i < 4; i++) {
-        [menu addAction:[UIAlertAction actionWithTitle:[NSString stringWithFormat:@"Display %d", i + 1] style:UIAlertActionStyleDefault handler:^(UIAlertAction* action) {
+        [menu addAction:[UIAlertAction actionWithTitle:[NSString stringWithFormat:@"Écran %d", i + 1] style:UIAlertActionStyleDefault handler:^(UIAlertAction* action) {
             sendKeyCombo(@[@0xA2, @0xA4, @0xA0, @(0x70 + i)]);
         }]];
     }
-    [menu addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:nil]];
+    [menu addAction:[UIAlertAction actionWithTitle:@"Annuler" style:UIAlertActionStyleCancel handler:nil]];
 
     [self presentMenu:menu];
 }
 
 - (void)showShortcutsMenu {
-    UIAlertController* menu = [UIAlertController alertControllerWithTitle:@"Keyboard Shortcuts" message:nil preferredStyle:UIAlertControllerStyleActionSheet];
+    UIAlertController* menu = [UIAlertController alertControllerWithTitle:@"Raccourcis clavier" message:nil preferredStyle:UIAlertControllerStyleActionSheet];
 
     NSArray<NSArray*>* builtInShortcuts = @[
         @[@"Alt+Tab", @[@0xA4, @0x09]],
         @[@"Alt+F4", @[@0xA4, @0x73]],
-        @[@"Start Menu (Win)", @[@0x5B]],
-        @[@"Show Desktop (Win+D)", @[@0x5B, @0x44]],
-        @[@"Task Manager (Ctrl+Shift+Esc)", @[@0xA2, @0xA0, @0x1B]],
-        @[@"Screenshot (Win+Shift+S)", @[@0x5B, @0xA0, @0x53]],
+        @[@"Menu Démarrer (Win)", @[@0x5B]],
+        @[@"Afficher le bureau (Win+D)", @[@0x5B, @0x44]],
+        @[@"Gestionnaire des tâches (Ctrl+Shift+Esc)", @[@0xA2, @0xA0, @0x1B]],
+        @[@"Capture d'écran (Win+Shift+S)", @[@0x5B, @0xA0, @0x53]],
     ];
     for (NSArray* shortcut in builtInShortcuts) {
         [menu addAction:[UIAlertAction actionWithTitle:shortcut[0] style:UIAlertActionStyleDefault handler:^(UIAlertAction* action) {
@@ -636,22 +637,22 @@ static NSNumber* metricNumber(id object, NSString* key) {
         }]];
     }
 
-    [menu addAction:[UIAlertAction actionWithTitle:@"Add Shortcut…" style:UIAlertActionStyleDefault handler:^(UIAlertAction* action) {
+    [menu addAction:[UIAlertAction actionWithTitle:@"Ajouter un raccourci…" style:UIAlertActionStyleDefault handler:^(UIAlertAction* action) {
         [self promptAddShortcut];
     }]];
     if (PenumbraCustomShortcuts().count > 0) {
-        [menu addAction:[UIAlertAction actionWithTitle:@"Remove Shortcut…" style:UIAlertActionStyleDestructive handler:^(UIAlertAction* action) {
+        [menu addAction:[UIAlertAction actionWithTitle:@"Supprimer un raccourci…" style:UIAlertActionStyleDestructive handler:^(UIAlertAction* action) {
             [self showRemoveShortcutMenu];
         }]];
     }
-    [menu addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:nil]];
+    [menu addAction:[UIAlertAction actionWithTitle:@"Annuler" style:UIAlertActionStyleCancel handler:nil]];
 
     [self presentMenu:menu];
 }
 
 - (void)promptAddShortcut {
-    UIAlertController* alert = [UIAlertController alertControllerWithTitle:@"Add Shortcut"
-                                                                   message:@"Keys separated by +, for example ctrl+shift+esc, win+e or alt+f4"
+    UIAlertController* alert = [UIAlertController alertControllerWithTitle:@"Ajouter un raccourci"
+                                                                   message:@"Touches séparées par +, par exemple ctrl+shift+esc, win+e ou alt+f4"
                                                             preferredStyle:UIAlertControllerStyleAlert];
     [alert addTextFieldWithConfigurationHandler:^(UITextField* textField) {
         textField.placeholder = @"ctrl+alt+t";
@@ -659,11 +660,11 @@ static NSNumber* metricNumber(id object, NSString* key) {
         textField.autocorrectionType = UITextAutocorrectionTypeNo;
     }];
     __weak UIAlertController* weakAlert = alert;
-    [alert addAction:[UIAlertAction actionWithTitle:@"Add" style:UIAlertActionStyleDefault handler:^(UIAlertAction* action) {
+    [alert addAction:[UIAlertAction actionWithTitle:@"Ajouter" style:UIAlertActionStyleDefault handler:^(UIAlertAction* action) {
         NSString* shortcut = [weakAlert.textFields[0].text stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
         if (parseKeyCombo(shortcut) == nil) {
-            UIAlertController* error = [UIAlertController alertControllerWithTitle:@"Unknown Key"
-                                                                           message:@"Use letters, digits, f1-f24 and key names like ctrl, alt, shift, win, esc, tab, enter, space, del, up, down, left, right, home, end."
+            UIAlertController* error = [UIAlertController alertControllerWithTitle:@"Touche inconnue"
+                                                                           message:@"Utilise des lettres, des chiffres, f1 à f24 et les noms de touches ctrl, alt, shift, win, esc, tab, enter, space, del, up, down, left, right, home, end."
                                                                     preferredStyle:UIAlertControllerStyleAlert];
             [error addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
             [self presentViewController:error animated:YES completion:nil];
@@ -671,12 +672,12 @@ static NSNumber* metricNumber(id object, NSString* key) {
         }
         PenumbraSetCustomShortcuts([PenumbraCustomShortcuts() arrayByAddingObject:shortcut]);
     }]];
-    [alert addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:nil]];
+    [alert addAction:[UIAlertAction actionWithTitle:@"Annuler" style:UIAlertActionStyleCancel handler:nil]];
     [self presentViewController:alert animated:YES completion:nil];
 }
 
 - (void)showRemoveShortcutMenu {
-    UIAlertController* menu = [UIAlertController alertControllerWithTitle:@"Remove Shortcut" message:nil preferredStyle:UIAlertControllerStyleActionSheet];
+    UIAlertController* menu = [UIAlertController alertControllerWithTitle:@"Supprimer un raccourci" message:nil preferredStyle:UIAlertControllerStyleActionSheet];
     for (NSString* shortcut in PenumbraCustomShortcuts()) {
         [menu addAction:[UIAlertAction actionWithTitle:shortcut style:UIAlertActionStyleDestructive handler:^(UIAlertAction* action) {
             NSMutableArray* shortcuts = [PenumbraCustomShortcuts() mutableCopy];
@@ -684,7 +685,7 @@ static NSNumber* metricNumber(id object, NSString* key) {
             PenumbraSetCustomShortcuts(shortcuts);
         }]];
     }
-    [menu addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:nil]];
+    [menu addAction:[UIAlertAction actionWithTitle:@"Annuler" style:UIAlertActionStyleCancel handler:nil]];
 
     [self presentMenu:menu];
 }
