@@ -27,6 +27,10 @@ static const int REFERENCE_HEIGHT = 720;
     CFTimeInterval lastScrollTime;
     NSTimer* inertiaTimer;
 
+    CFTimeInterval lastTapTime;
+    CGPoint lastTapLocation;
+    BOOL tapDragActive;
+
 #if TARGET_OS_TV
     UIGestureRecognizer* remotePressRecognizer;
     UIGestureRecognizer* remoteLongPressRecognizer;
@@ -103,7 +107,16 @@ static const int REFERENCE_HEIGHT = 720;
     if ([[event allTouches] count] == 1) {
         UITouch *touch = [[event allTouches] anyObject];
         originalLocation = touchLocation = [touch locationInView:view];
-        if (!isDragging) {
+        if (!isDragging && CACurrentMediaTime() - lastTapTime < 0.3 &&
+            hypotf(touchLocation.x - lastTapLocation.x, touchLocation.y - lastTapLocation.y) < 40) {
+            // Double tap and hold, like on a Mac trackpad: the second touch keeps the
+            // left button down so windows, files and selections can be dragged
+            isDragging = true;
+            tapDragActive = true;
+            lastTapTime = 0;
+            LiSendMouseButtonEvent(BUTTON_ACTION_PRESS, BUTTON_LEFT);
+        }
+        else if (!isDragging) {
             dragTimer = [NSTimer scheduledTimerWithTimeInterval:0.650
                                                      target:self
                                                    selector:@selector(onDragStart:)
@@ -178,6 +191,7 @@ static const int REFERENCE_HEIGHT = 720;
     dragTimer = nil;
     if (isDragging) {
         isDragging = false;
+        tapDragActive = false;
         LiSendMouseButtonEvent(BUTTON_ACTION_RELEASE, BUTTON_LEFT);
     } else if (!touchMoved) {
         if (peakTouchCount == 2) {
@@ -192,17 +206,24 @@ static const int REFERENCE_HEIGHT = 720;
                 LiSendMouseButtonEvent(BUTTON_ACTION_RELEASE, BUTTON_RIGHT);
             });
         } else if (peakTouchCount == 1) {
+            // Remember the tap so a quick second touch can start a drag
+            lastTapTime = CACurrentMediaTime();
+            lastTapLocation = touchLocation;
+
             dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_HIGH, 0), ^{
                 if (!self->isDragging){
                     Log(LOG_D, @"Sending left mouse button press");
-                    
+
                     LiSendMouseButtonEvent(BUTTON_ACTION_PRESS, BUTTON_LEFT);
-                    
+
                     // Wait 100 ms to simulate a real button press
                     usleep(100 * 1000);
                 }
-                self->isDragging = false;
-                LiSendMouseButtonEvent(BUTTON_ACTION_RELEASE, BUTTON_LEFT);
+                // A double tap and hold may have started a drag meanwhile: keep its button down
+                if (!self->tapDragActive) {
+                    self->isDragging = false;
+                    LiSendMouseButtonEvent(BUTTON_ACTION_RELEASE, BUTTON_LEFT);
+                }
             });
         }
     }
@@ -227,6 +248,7 @@ static const int REFERENCE_HEIGHT = 720;
     dragTimer = nil;
     if (isDragging) {
         isDragging = false;
+        tapDragActive = false;
         LiSendMouseButtonEvent(BUTTON_ACTION_RELEASE, BUTTON_LEFT);
     }
     peakTouchCount = 0;

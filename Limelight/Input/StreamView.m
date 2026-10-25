@@ -15,6 +15,7 @@
 #import "AbsoluteTouchHandler.h"
 #import "KeyboardInputField.h"
 #import "../PenumbraSettings.h"
+#import "../PenumbraTheme.h"
 
 @import AVFoundation;
 
@@ -457,39 +458,42 @@ static const double X1_MOUSE_SPEED_DIVISOR = 2.5;
 #endif
 
 #if !TARGET_OS_TV
-// Toolbar above the software keyboard: a fixed Done button, then a horizontally
-// scrolling row of special keys (too many to fit on an iPhone in one row)
+// Toolbar above the software keyboard: a fixed button to close the keyboard, then
+// a horizontally scrolling row of special keys drawn like the system keyboard's keys
 - (UIView *)createKeyboardAccessoryView {
     UIInputView *accessoryView = [[UIInputView alloc] initWithFrame:CGRectMake(0, 0, self.bounds.size.width, 48) inputViewStyle:UIInputViewStyleKeyboard];
 
-    UIButton *doneButton = [self createKeyButtonWithImageNamed:@"DoneIcon.png" keyCode:0x00 isToggleable:NO];
-    doneButton.imageView.backgroundColor = [UIColor clearColor];
-    doneButton.frame = CGRectMake(4, 4, 40, 40);
+    UIButton *doneButton = [self createKeyButtonWithKeyCode:0x00 isToggleable:NO];
+    UIImageSymbolConfiguration *doneConfig = [UIImageSymbolConfiguration configurationWithPointSize:18 weight:UIImageSymbolWeightMedium];
+    [doneButton setImage:[UIImage systemImageNamed:@"keyboard.chevron.compact.down" withConfiguration:doneConfig] forState:UIControlStateNormal];
+    doneButton.tintColor = [UIColor labelColor];
+    doneButton.accessibilityLabel = @"Fermer le clavier";
+    doneButton.frame = CGRectMake(2, 2, 44, 44);
     [accessoryView addSubview:doneButton];
 
     NSMutableArray<UIButton *> *keyButtons = [NSMutableArray arrayWithObjects:
-        [self createKeyButtonWithImageNamed:@"WindowsIcon.png" keyCode:0x5B isToggleable:YES],
-        [self createKeyButtonWithImageNamed:@"EscapeIcon.png" keyCode:0x1B isToggleable:NO],
-        [self createKeyButtonWithImageNamed:@"TabIcon.png" keyCode:0x09 isToggleable:NO],
-        [self createKeyButtonWithImageNamed:@"ShiftIcon.png" keyCode:0xA0 isToggleable:YES],
-        [self createKeyButtonWithImageNamed:@"ControlIcon.png" keyCode:0xA2 isToggleable:YES],
-        [self createKeyButtonWithImageNamed:@"AltIcon.png" keyCode:0xA4 isToggleable:YES],
-        [self createKeyButtonWithImageNamed:@"DeleteIcon.png" keyCode:0x2E isToggleable:NO],
-        [self createKeyButtonWithSymbolNamed:@"arrow.left" keyCode:0x25],
-        [self createKeyButtonWithSymbolNamed:@"arrow.up" keyCode:0x26],
-        [self createKeyButtonWithSymbolNamed:@"arrow.down" keyCode:0x28],
-        [self createKeyButtonWithSymbolNamed:@"arrow.right" keyCode:0x27],
-        [self createKeyButtonWithTitle:@"Home" keyCode:0x24],
-        [self createKeyButtonWithTitle:@"End" keyCode:0x23],
-        [self createKeyButtonWithTitle:@"PgUp" keyCode:0x21],
-        [self createKeyButtonWithTitle:@"PgDn" keyCode:0x22],
+        [self createKeyButtonWithTitle:@"Esc" keyCode:0x1B isToggleable:NO],
+        [self createKeyButtonWithTitle:@"Tab" keyCode:0x09 isToggleable:NO],
+        [self createKeyButtonWithTitle:@"Ctrl" keyCode:0xA2 isToggleable:YES],
+        [self createKeyButtonWithTitle:@"Alt" keyCode:0xA4 isToggleable:YES],
+        [self createKeyButtonWithSymbolNamed:@"shift" keyCode:0xA0 isToggleable:YES],
+        [self createKeyButtonWithTitle:@"Win" keyCode:0x5B isToggleable:YES],
+        [self createKeyButtonWithTitle:@"Suppr" keyCode:0x2E isToggleable:NO],
+        [self createKeyButtonWithSymbolNamed:@"arrow.left" keyCode:0x25 isToggleable:NO],
+        [self createKeyButtonWithSymbolNamed:@"arrow.up" keyCode:0x26 isToggleable:NO],
+        [self createKeyButtonWithSymbolNamed:@"arrow.down" keyCode:0x28 isToggleable:NO],
+        [self createKeyButtonWithSymbolNamed:@"arrow.right" keyCode:0x27 isToggleable:NO],
+        [self createKeyButtonWithTitle:@"Home" keyCode:0x24 isToggleable:NO],
+        [self createKeyButtonWithTitle:@"End" keyCode:0x23 isToggleable:NO],
+        [self createKeyButtonWithTitle:@"PgUp" keyCode:0x21 isToggleable:NO],
+        [self createKeyButtonWithTitle:@"PgDn" keyCode:0x22 isToggleable:NO],
         nil];
     for (int i = 0; i < 12; i++) {
-        [keyButtons addObject:[self createKeyButtonWithTitle:[NSString stringWithFormat:@"F%d", i + 1] keyCode:0x70 + i]];
+        [keyButtons addObject:[self createKeyButtonWithTitle:[NSString stringWithFormat:@"F%d", i + 1] keyCode:0x70 + i isToggleable:NO]];
     }
 
     UIStackView *keyStack = [[UIStackView alloc] initWithArrangedSubviews:keyButtons];
-    keyStack.spacing = 4;
+    keyStack.spacing = 6;
     keyStack.alignment = UIStackViewAlignmentCenter;
     keyStack.translatesAutoresizingMaskIntoConstraints = NO;
 
@@ -520,42 +524,42 @@ static const double X1_MOUSE_SPEED_DIVISOR = 2.5;
     return button;
 }
 
-- (UIButton *)createKeyButtonWithImageNamed:(NSString *)imageName keyCode:(NSInteger)keyCode isToggleable:(BOOL)isToggleable {
+// Keys look like the system keyboard's: white in light mode, grey in dark mode.
+// A latched modifier (Ctrl, Alt, Shift, Win) turns golden.
+- (void)styleKeyButton:(UIButton *)button on:(BOOL)on {
+    UIColor *keyColor = [UIColor colorWithDynamicProvider:^UIColor *(UITraitCollection *traits) {
+        return traits.userInterfaceStyle == UIUserInterfaceStyleDark ? [UIColor colorWithWhite:0.42 alpha:1.0] : [UIColor whiteColor];
+    }];
+    UIColor *glyphColor = on ? PenumbraOnAccentColor() : [UIColor labelColor];
+    button.backgroundColor = on ? PenumbraAccentColor() : keyColor;
+    button.tintColor = glyphColor;
+    [button setTitleColor:glyphColor forState:UIControlStateNormal];
+}
+
+- (UIButton *)createKeyCapWithKeyCode:(NSInteger)keyCode isToggleable:(BOOL)isToggleable {
     UIButton *button = [self createKeyButtonWithKeyCode:keyCode isToggleable:isToggleable];
-    [button setImage:[UIImage imageNamed:imageName] forState:UIControlStateNormal];
-    // 40pt hit area around the 18pt key icon
-    [button.widthAnchor constraintEqualToConstant:40].active = YES;
-    [button.heightAnchor constraintEqualToConstant:40].active = YES;
-    button.imageView.contentMode = UIViewContentModeScaleAspectFit;
-    button.imageView.backgroundColor = [UIColor blackColor];
-    button.imageView.layer.cornerRadius = 10.0;
-    button.imageEdgeInsets = UIEdgeInsetsMake(11, 11, 11, 11);
-    return button;
-}
-
-// Text and symbol keys mimic the PNG key icons: a light grey keycap with dark glyphs
-- (UIButton *)createTextKeyButtonWithKeyCode:(NSInteger)keyCode {
-    UIButton *button = [self createKeyButtonWithKeyCode:keyCode isToggleable:NO];
-    button.backgroundColor = [UIColor colorWithWhite:0.72 alpha:1.0];
+    [self styleKeyButton:button on:NO];
     button.layer.cornerRadius = 6.0;
-    button.tintColor = [UIColor colorWithWhite:0.2 alpha:1.0];
-    [button setTitleColor:button.tintColor forState:UIControlStateNormal];
-    button.titleLabel.font = [UIFont systemFontOfSize:12 weight:UIFontWeightBold];
-    button.contentEdgeInsets = UIEdgeInsetsMake(0, 7, 0, 7);
-    [button.widthAnchor constraintGreaterThanOrEqualToConstant:36].active = YES;
-    [button.heightAnchor constraintEqualToConstant:34].active = YES;
+    button.layer.shadowColor = [UIColor blackColor].CGColor;
+    button.layer.shadowOffset = CGSizeMake(0, 1);
+    button.layer.shadowOpacity = 0.3;
+    button.layer.shadowRadius = 0;
+    button.titleLabel.font = [UIFont systemFontOfSize:15 weight:UIFontWeightMedium];
+    button.contentEdgeInsets = UIEdgeInsetsMake(0, 10, 0, 10);
+    [button.widthAnchor constraintGreaterThanOrEqualToConstant:40].active = YES;
+    [button.heightAnchor constraintEqualToConstant:38].active = YES;
     return button;
 }
 
-- (UIButton *)createKeyButtonWithSymbolNamed:(NSString *)symbolName keyCode:(NSInteger)keyCode {
-    UIButton *button = [self createTextKeyButtonWithKeyCode:keyCode];
-    UIImageSymbolConfiguration *config = [UIImageSymbolConfiguration configurationWithPointSize:12 weight:UIImageSymbolWeightBold];
+- (UIButton *)createKeyButtonWithSymbolNamed:(NSString *)symbolName keyCode:(NSInteger)keyCode isToggleable:(BOOL)isToggleable {
+    UIButton *button = [self createKeyCapWithKeyCode:keyCode isToggleable:isToggleable];
+    UIImageSymbolConfiguration *config = [UIImageSymbolConfiguration configurationWithPointSize:15 weight:UIImageSymbolWeightMedium];
     [button setImage:[UIImage systemImageNamed:symbolName withConfiguration:config] forState:UIControlStateNormal];
     return button;
 }
 
-- (UIButton *)createKeyButtonWithTitle:(NSString *)title keyCode:(NSInteger)keyCode {
-    UIButton *button = [self createTextKeyButtonWithKeyCode:keyCode];
+- (UIButton *)createKeyButtonWithTitle:(NSString *)title keyCode:(NSInteger)keyCode isToggleable:(BOOL)isToggleable {
+    UIButton *button = [self createKeyCapWithKeyCode:keyCode isToggleable:isToggleable];
     [button setTitle:title forState:UIControlStateNormal];
     return button;
 }
@@ -566,12 +570,9 @@ static const double X1_MOUSE_SPEED_DIVISOR = 2.5;
     BOOL isOn = [objc_getAssociatedObject(sender, "isOn") boolValue];
     if (isToggleable){
         isOn = !isOn;
-        // Update the button's appearance based on its new state
-        if (isOn) {
-            sender.imageView.backgroundColor = [UIColor lightGrayColor];
-        } else {
-            sender.imageView.backgroundColor = [UIColor blackColor];
-        }
+#if !TARGET_OS_TV
+        [self styleKeyButton:sender on:isOn];
+#endif
     }
     // Update the new on/off state of the button
     objc_setAssociatedObject(sender, "isOn", @(isOn), OBJC_ASSOCIATION_RETAIN_NONATOMIC);
