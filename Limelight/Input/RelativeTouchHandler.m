@@ -73,14 +73,21 @@ static const int REFERENCE_HEIGHT = 720;
         return;
     }
 
+    // Decelerate like an iOS scroll view (rate 0.998 per millisecond), based on
+    // real elapsed time so a late timer tick doesn't change the feel
+    __block CFTimeInterval lastTick = CACurrentMediaTime();
     [inertiaTimer invalidate];
     inertiaTimer = [NSTimer scheduledTimerWithTimeInterval:1.0 / 60 repeats:YES block:^(NSTimer* timer) {
-        self->scrollVelocity *= 0.95;
+        CFTimeInterval now = CACurrentMediaTime();
+        CFTimeInterval elapsed = now - lastTick;
+        lastTick = now;
+
+        self->scrollVelocity *= pow(0.998, elapsed * 1000);
         if (fabs(self->scrollVelocity) < 100) {
             [self stopInertialScroll];
             return;
         }
-        LiSendHighResScrollEvent((short)(self->scrollVelocity / 60));
+        LiSendHighResScrollEvent((short)(self->scrollVelocity * elapsed));
     }];
 }
 

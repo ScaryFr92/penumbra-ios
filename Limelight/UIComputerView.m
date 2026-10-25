@@ -98,15 +98,11 @@ static const float REFRESH_CYCLE = 2.0f;
 }
 
 - (void) cardPressed {
-    [UIView animateWithDuration:0.12 animations:^{
-        self.transform = CGAffineTransformMakeScale(0.96, 0.96);
-    }];
+    PenumbraAnimatePress(self, YES);
 }
 
 - (void) cardReleased {
-    [UIView animateWithDuration:0.2 animations:^{
-        self.transform = CGAffineTransformIdentity;
-    }];
+    PenumbraAnimatePress(self, NO);
 }
 
 #if TARGET_OS_TV

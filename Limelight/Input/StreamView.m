@@ -460,11 +460,11 @@ static const double X1_MOUSE_SPEED_DIVISOR = 2.5;
 // Toolbar above the software keyboard: a fixed Done button, then a horizontally
 // scrolling row of special keys (too many to fit on an iPhone in one row)
 - (UIView *)createKeyboardAccessoryView {
-    UIInputView *accessoryView = [[UIInputView alloc] initWithFrame:CGRectMake(0, 0, self.bounds.size.width, 44) inputViewStyle:UIInputViewStyleKeyboard];
+    UIInputView *accessoryView = [[UIInputView alloc] initWithFrame:CGRectMake(0, 0, self.bounds.size.width, 48) inputViewStyle:UIInputViewStyleKeyboard];
 
     UIButton *doneButton = [self createKeyButtonWithImageNamed:@"DoneIcon.png" keyCode:0x00 isToggleable:NO];
     doneButton.imageView.backgroundColor = [UIColor clearColor];
-    doneButton.frame = CGRectMake(8, 7, 30, 30);
+    doneButton.frame = CGRectMake(4, 4, 40, 40);
     [accessoryView addSubview:doneButton];
 
     NSMutableArray<UIButton *> *keyButtons = [NSMutableArray arrayWithObjects:
@@ -489,11 +489,11 @@ static const double X1_MOUSE_SPEED_DIVISOR = 2.5;
     }
 
     UIStackView *keyStack = [[UIStackView alloc] initWithArrangedSubviews:keyButtons];
-    keyStack.spacing = 8;
+    keyStack.spacing = 4;
     keyStack.alignment = UIStackViewAlignmentCenter;
     keyStack.translatesAutoresizingMaskIntoConstraints = NO;
 
-    UIScrollView *keyScrollView = [[UIScrollView alloc] initWithFrame:CGRectMake(46, 0, accessoryView.bounds.size.width - 46, 44)];
+    UIScrollView *keyScrollView = [[UIScrollView alloc] initWithFrame:CGRectMake(48, 0, accessoryView.bounds.size.width - 48, 48)];
     keyScrollView.autoresizingMask = UIViewAutoresizingFlexibleWidth;
     keyScrollView.showsHorizontalScrollIndicator = NO;
     keyScrollView.contentInset = UIEdgeInsetsMake(0, 0, 0, 8);
@@ -523,12 +523,13 @@ static const double X1_MOUSE_SPEED_DIVISOR = 2.5;
 - (UIButton *)createKeyButtonWithImageNamed:(NSString *)imageName keyCode:(NSInteger)keyCode isToggleable:(BOOL)isToggleable {
     UIButton *button = [self createKeyButtonWithKeyCode:keyCode isToggleable:isToggleable];
     [button setImage:[UIImage imageNamed:imageName] forState:UIControlStateNormal];
-    [button.widthAnchor constraintEqualToConstant:30].active = YES;
-    [button.heightAnchor constraintEqualToConstant:30].active = YES;
+    // 40pt hit area around the 18pt key icon
+    [button.widthAnchor constraintEqualToConstant:40].active = YES;
+    [button.heightAnchor constraintEqualToConstant:40].active = YES;
     button.imageView.contentMode = UIViewContentModeScaleAspectFit;
     button.imageView.backgroundColor = [UIColor blackColor];
     button.imageView.layer.cornerRadius = 10.0;
-    button.imageEdgeInsets = UIEdgeInsetsMake(6, 6, 6, 6);
+    button.imageEdgeInsets = UIEdgeInsetsMake(11, 11, 11, 11);
     return button;
 }
 
@@ -536,13 +537,13 @@ static const double X1_MOUSE_SPEED_DIVISOR = 2.5;
 - (UIButton *)createTextKeyButtonWithKeyCode:(NSInteger)keyCode {
     UIButton *button = [self createKeyButtonWithKeyCode:keyCode isToggleable:NO];
     button.backgroundColor = [UIColor colorWithWhite:0.72 alpha:1.0];
-    button.layer.cornerRadius = 4.0;
+    button.layer.cornerRadius = 6.0;
     button.tintColor = [UIColor colorWithWhite:0.2 alpha:1.0];
     [button setTitleColor:button.tintColor forState:UIControlStateNormal];
     button.titleLabel.font = [UIFont systemFontOfSize:12 weight:UIFontWeightBold];
     button.contentEdgeInsets = UIEdgeInsetsMake(0, 7, 0, 7);
-    [button.widthAnchor constraintGreaterThanOrEqualToConstant:24].active = YES;
-    [button.heightAnchor constraintEqualToConstant:24].active = YES;
+    [button.widthAnchor constraintGreaterThanOrEqualToConstant:36].active = YES;
+    [button.heightAnchor constraintEqualToConstant:34].active = YES;
     return button;
 }
 
@@ -576,6 +577,16 @@ static const double X1_MOUSE_SPEED_DIVISOR = 2.5;
     objc_setAssociatedObject(sender, "isOn", @(isOn), OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     // Get the keyCode parameter and convert to short for key press event
     short keyCode = [objc_getAssociatedObject(sender, "keyCode") shortValue];
+
+#if !TARGET_OS_TV
+    // A light tap for each key, a selection tick when a modifier latches on or off
+    if (isToggleable) {
+        [[[UISelectionFeedbackGenerator alloc] init] selectionChanged];
+    }
+    else if (keyCode) {
+        [[[UIImpactFeedbackGenerator alloc] initWithStyle:UIImpactFeedbackStyleLight] impactOccurred];
+    }
+#endif
     // Close keyboard if done button clicked
     if (!keyCode) {
         [keyInputField resignFirstResponder];

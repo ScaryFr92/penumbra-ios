@@ -88,8 +88,9 @@ static const CGFloat TITLE_FONT_SIZE = 18;
 
     [self addTarget:self action:@selector(appClicked:) forControlEvents:UIControlEventPrimaryActionTriggered];
 
-    [self addTarget:self action:@selector(buttonSelected:) forControlEvents:UIControlEventTouchDown];
-    [self addTarget:self action:@selector(buttonDeselected:) forControlEvents:UIControlEventTouchUpInside | UIControlEventTouchCancel | UIControlEventTouchDragExit];
+    // Dragging away and back re-arms the press, like any iOS button
+    [self addTarget:self action:@selector(buttonSelected:) forControlEvents:UIControlEventTouchDown | UIControlEventTouchDragEnter];
+    [self addTarget:self action:@selector(buttonDeselected:) forControlEvents:UIControlEventTouchUpInside | UIControlEventTouchUpOutside | UIControlEventTouchCancel | UIControlEventTouchDragExit];
 
 #if TARGET_OS_TV
     _appImage.adjustsImageWhenAncestorFocused = YES;
@@ -198,7 +199,7 @@ static const CGFloat TITLE_FONT_SIZE = 18;
     if ([self isRunning]) {
         _runningBadge = [[UILabel alloc] init];
         _runningBadge.text = @"En cours";
-        _runningBadge.font = [UIFont systemFontOfSize:TITLE_FONT_SIZE - 4 weight:UIFontWeightBold];
+        _runningBadge.font = [UIFont systemFontOfSize:TITLE_FONT_SIZE - 2 weight:UIFontWeightBold];
         _runningBadge.textColor = PenumbraOnAccentColor();
         _runningBadge.backgroundColor = PenumbraAccentColor();
         _runningBadge.textAlignment = NSTextAlignmentCenter;
@@ -225,14 +226,10 @@ static const CGFloat TITLE_FONT_SIZE = 18;
 }
 
 - (void) buttonSelected:(id)sender {
-    [UIView animateWithDuration:0.12 animations:^{
-        self->_appImage.transform = CGAffineTransformMakeScale(0.95, 0.95);
-    }];
+    PenumbraAnimatePress(_appImage, YES);
 }
 - (void) buttonDeselected:(id)sender {
-    [UIView animateWithDuration:0.2 animations:^{
-        self->_appImage.transform = CGAffineTransformIdentity;
-    }];
+    PenumbraAnimatePress(_appImage, NO);
 }
 
 - (void) updateLoop {

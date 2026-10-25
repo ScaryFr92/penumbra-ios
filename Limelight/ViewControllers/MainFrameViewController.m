@@ -1624,9 +1624,12 @@ static NSMutableSet* hostList;
     [banner addSubview:cover];
 
     UILabel* caption = [[UILabel alloc] initWithFrame:CGRectMake(72, 17, 200, 14)];
-    caption.text = @"EN COURS";
-    caption.font = [UIFont systemFontOfSize:11 weight:UIFontWeightBold];
-    caption.textColor = PenumbraAccentColor();
+    // Small capitals read better with a little extra tracking
+    caption.attributedText = [[NSAttributedString alloc] initWithString:@"EN COURS" attributes:@{
+        NSFontAttributeName: [UIFont systemFontOfSize:11 weight:UIFontWeightBold],
+        NSForegroundColorAttributeName: PenumbraAccentColor(),
+        NSKernAttributeName: @0.8,
+    }];
     [banner addSubview:caption];
 
     UIButton* quitButton = [self bannerButtonWithTitle:@"Quitter" filled:NO action:@selector(quitRunningAppTapped:)];

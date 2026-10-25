@@ -457,14 +457,17 @@ static NSNumber* metricNumber(id object, NSString* key) {
             [_overlayView setTextAlignment:NSTextAlignmentCenter];
         }
         
-        [_overlayView setTextColor:[UIColor lightGrayColor]];
-        [_overlayView setBackgroundColor:[UIColor blackColor]];
+        // A translucent dark plate keeps the text fully opaque and readable over the video.
+        // Digits have a fixed width so changing numbers don't make the text jitter.
+        [_overlayView setTextColor:[UIColor colorWithWhite:1 alpha:0.9]];
+        [_overlayView setBackgroundColor:[UIColor colorWithWhite:0 alpha:0.55]];
+        _overlayView.layer.cornerRadius = 10;
+        _overlayView.textContainerInset = UIEdgeInsetsMake(6, 10, 6, 10);
 #if TARGET_OS_TV
-        [_overlayView setFont:[UIFont systemFontOfSize:24]];
+        [_overlayView setFont:[UIFont monospacedDigitSystemFontOfSize:24 weight:UIFontWeightMedium]];
 #else
-        [_overlayView setFont:[UIFont systemFontOfSize:12]];
+        [_overlayView setFont:[UIFont monospacedDigitSystemFontOfSize:12 weight:UIFontWeightMedium]];
 #endif
-        [_overlayView setAlpha:0.5];
         [self.view addSubview:_overlayView];
     }
     
@@ -478,7 +481,8 @@ static NSNumber* metricNumber(id object, NSString* key) {
                                            _overlayView.frame.size.height)];
         [_overlayView setText:text];
         [_overlayView sizeToFit];
-        [_overlayView setCenter:CGPointMake(self.view.frame.size.width / 2, _overlayView.frame.size.height / 2)];
+        // Keep clear of the notch and status area
+        [_overlayView setCenter:CGPointMake(self.view.frame.size.width / 2, self.view.safeAreaInsets.top + 8 + _overlayView.frame.size.height / 2)];
         [_overlayView setHidden:NO];
     }
     else {
